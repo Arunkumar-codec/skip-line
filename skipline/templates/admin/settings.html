@@ -1,0 +1,118 @@
+{% extends "shared/base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block sidebar %}{% include "shared/admin_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_admin.name[0].upper() }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_admin.name }}</span>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_admin.email }}</h6></li>
+    <li><a class="dropdown-item" href="/admin/change-password"><i class="bi bi-shield-lock me-2"></i>Change Password</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">System Settings</h1>
+    <p class="page-subtitle">Platform configuration and admin account management</p>
+  </div>
+</div>
+
+{% if success %}
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+  <i class="bi bi-check-circle-fill me-2"></i>Settings saved successfully.
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="row g-4 fade-in-up">
+
+  <!-- Admin account info -->
+  <div class="col-lg-6">
+    <div class="content-card h-100">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl"><i class="bi bi-person-badge me-2"></i>Admin Account</h2>
+      </div>
+      <div class="p-4">
+        <dl class="row mb-0">
+          <dt class="col-sm-4 text-muted fw-normal">Name</dt>
+          <dd class="col-sm-8 fw-600">{{ current_admin.name }}</dd>
+          <dt class="col-sm-4 text-muted fw-normal">Email</dt>
+          <dd class="col-sm-8">{{ current_admin.email }}</dd>
+          <dt class="col-sm-4 text-muted fw-normal">Status</dt>
+          <dd class="col-sm-8">
+            <span class="badge-status badge-active">Active</span>
+          </dd>
+        </dl>
+        <hr>
+        <a href="/admin/change-password" class="btn btn-outline-primary btn-sm">
+          <i class="bi bi-shield-lock me-1"></i>Change Password
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Platform info -->
+  <div class="col-lg-6">
+    <div class="content-card h-100">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl"><i class="bi bi-info-circle me-2"></i>Platform Information</h2>
+      </div>
+      <div class="p-4">
+        <dl class="row mb-0">
+          <dt class="col-sm-5 text-muted fw-normal">Application</dt>
+          <dd class="col-sm-7 fw-600">Skip Line</dd>
+          <dt class="col-sm-5 text-muted fw-normal">Version</dt>
+          <dd class="col-sm-7">1.0.0</dd>
+          <dt class="col-sm-5 text-muted fw-normal">Server Time</dt>
+          <dd class="col-sm-7">{{ now.strftime('%d %b %Y %H:%M UTC') if now else '—' }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick links -->
+  <div class="col-12">
+    <div class="content-card">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl"><i class="bi bi-lightning me-2"></i>Quick Actions</h2>
+      </div>
+      <div class="p-4 d-flex flex-wrap gap-2">
+        <a href="/admin/organizations" class="btn btn-outline-secondary">
+          <i class="bi bi-building me-1"></i>Manage Organizations
+        </a>
+        <a href="/admin/users" class="btn btn-outline-secondary">
+          <i class="bi bi-people me-1"></i>Manage Users
+        </a>
+        <a href="/admin/reports/revenue" class="btn btn-outline-secondary">
+          <i class="bi bi-currency-rupee me-1"></i>Revenue Report
+        </a>
+        <a href="/admin/reports/queue" class="btn btn-outline-secondary">
+          <i class="bi bi-bar-chart-line me-1"></i>Queue Stats
+        </a>
+        <a href="/api/docs" target="_blank" class="btn btn-outline-info">
+          <i class="bi bi-code-slash me-1"></i>API Docs
+        </a>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

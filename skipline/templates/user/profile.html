@@ -1,0 +1,85 @@
+{% extends "shared/base.html" %}
+{% block title %}My Profile{% endblock %}
+{% block sidebar %}{% include "shared/user_sidebar.html" %}{% endblock %}
+
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-info d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_user.name[0].upper() if current_user else 'U' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_user.name.split()[0] if current_user else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_user.email if current_user else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i>Profile</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <h1 class="page-title">My Profile</h1>
+</div>
+<div class="row g-4 fade-in-up">
+  <div class="col-md-4">
+    <div class="content-card text-center p-4">
+      <div class="rounded-circle bg-primary d-inline-flex align-items-center justify-content-center text-white mb-3"
+           style="width:80px;height:80px;font-size:2rem;font-weight:700">
+        {{ current_user.name[0].upper() }}
+      </div>
+      <h3 class="fw-700 mb-1">{{ current_user.name }}</h3>
+      <p class="text-muted small mb-3">{{ current_user.email }}</p>
+      <p class="text-muted small mb-0">Member since {{ current_user.created_at.strftime('%B %Y') }}</p>
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="content-card p-4">
+      <h5 class="fw-700 mb-4">Edit Profile</h5>
+      {% if success %}<div class="alert alert-success py-2">Profile updated successfully!</div>{% endif %}
+      {% if error %}<div class="alert alert-danger py-2">{{ error }}</div>{% endif %}
+      <form method="post" action="/user/profile">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"/>
+        <div class="mb-3">
+          <label class="form-label">Full Name</label>
+          <input type="text" name="name" class="form-control" value="{{ current_user.name }}" required/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Mobile</label>
+          <input type="tel" name="mobile" class="form-control" value="{{ current_user.mobile }}"/>
+        </div>
+        <div class="mb-4">
+          <label class="form-label">Address</label>
+          <textarea name="address" class="form-control" rows="2">{{ current_user.address or '' }}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </form>
+      <hr class="my-4"/>
+      <h5 class="fw-700 mb-3">Change Password</h5>
+      <form method="post" action="/user/change-password">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"/>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Current Password</label>
+            <input type="password" name="current_password" class="form-control" required/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">New Password</label>
+            <input type="password" name="new_password" class="form-control" required/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Confirm New</label>
+            <input type="password" name="confirm_password" class="form-control" required/>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-outline-primary mt-3">Update Password</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

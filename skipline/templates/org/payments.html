@@ -1,0 +1,99 @@
+{% extends "shared/base.html" %}
+{% block title %}Payments{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Payment Records</h1>
+    <p class="page-subtitle">All payment transactions for your organization</p>
+  </div>
+  <div class="stat-card py-2 px-4 d-flex align-items-center gap-3" style="min-width:200px">
+    <div class="stat-icon green" style="width:36px;height:36px"><i class="bi bi-currency-rupee"></i></div>
+    <div>
+      <div class="stat-label">Total Collected</div>
+      <div class="fw-700 text-success">₹{{ "%.2f"|format(total_revenue) }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="table-responsive">
+    <table class="sl-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Token</th>
+          <th>Amount</th>
+          <th>Method</th>
+          <th>Status</th>
+          <th>Razorpay ID</th>
+          <th>Paid At</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td class="text-xs text-muted">{{ p.id }}</td>
+          <td>
+            {% if p.token %}
+            <span class="fw-700 text-primary">{{ p.token.token_number }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="fw-700">₹{{ "%.2f"|format(p.amount) }}</td>
+          <td><span class="badge bg-light text-dark">{{ p.payment_method }}</span></td>
+          <td>
+            <span class="badge-status badge-{{ 'completed' if p.status == 'paid' else p.status }}">
+              {{ p.status }}
+            </span>
+          </td>
+          <td class="text-xs text-muted">{{ p.razorpay_payment_id or '—' }}</td>
+          <td class="text-xs text-muted">
+            {{ p.paid_at.strftime('%d %b %Y, %H:%M') if p.paid_at else '—' }}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-5">
+            <i class="bi bi-currency-rupee fs-2 d-block mb-2"></i>No payment records yet
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pages > 1 %}
+  <div class="d-flex justify-content-center py-3">
+    <nav><ul class="pagination pagination-sm mb-0">
+      {% for p in range(1, pages+1) %}
+      <li class="page-item {% if p == page %}active{% endif %}">
+        <a class="page-link" href="?page={{ p }}">{{ p }}</a>
+      </li>
+      {% endfor %}
+    </ul></nav>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

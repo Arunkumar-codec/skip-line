@@ -1,0 +1,40 @@
+<!-- templates/shared/user_sidebar.html -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon"><i class="bi bi-skip-forward-fill"></i></div>
+    <div class="brand-text">
+      <span class="brand-name">Skip Line</span>
+      <span class="brand-role">My Account</span>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav mt-3">
+    <div class="nav-section-label">Main</div>
+    <a href="/user/dashboard" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+      <i class="bi bi-house"></i><span>Dashboard</span>
+    </a>
+    <a href="/user/organizations" class="nav-item {% if active_page == 'search' %}active{% endif %}">
+      <i class="bi bi-search"></i><span>Find Organization</span>
+    </a>
+
+    <div class="nav-section-label">My Tokens</div>
+    <a href="/user/tokens/active" class="nav-item {% if active_page == 'active_tokens' %}active{% endif %}">
+      <i class="bi bi-ticket-perforated"></i><span>Active Tokens</span>
+    </a>
+    <a href="/user/tokens/history" class="nav-item {% if active_page == 'token_history' %}active{% endif %}">
+      <i class="bi bi-clock-history"></i><span>Token History</span>
+    </a>
+
+    <div class="nav-section-label">Account</div>
+    <a href="/user/notifications" class="nav-item {% if active_page == 'notifications' %}active{% endif %}">
+      <i class="bi bi-bell"></i><span>Notifications</span>
+    </a>
+    <a href="/user/profile" class="nav-item {% if active_page == 'profile' %}active{% endif %}">
+      <i class="bi bi-person-circle"></i><span>Profile</span>
+    </a>
+    <a href="/auth/logout" class="nav-item text-danger">
+      <i class="bi bi-box-arrow-right"></i><span>Logout</span>
+    </a>
+  </nav>
+</aside>
+<div class="sidebar-overlay d-lg-none" id="sidebarOverlay"></div>

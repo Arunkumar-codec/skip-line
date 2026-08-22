@@ -1,0 +1,194 @@
+{% extends "shared/base.html" %}
+{% block title %}Services{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Service Management</h1>
+    <p class="page-subtitle">Define the services your organization offers</p>
+  </div>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#serviceModal" onclick="openAdd()">
+    <i class="bi bi-plus-lg me-1"></i>Add Service
+  </button>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="table-responsive">
+    <table class="sl-table">
+      <thead>
+        <tr>
+          <th>Service Name</th>
+          <th>Description</th>
+          <th>Price</th>
+          <th>Est. Time</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in services %}
+        <tr>
+          <td class="fw-600">{{ s.name }}</td>
+          <td class="text-sm text-muted">{{ s.description or '—' }}</td>
+          <td class="fw-600">
+            {% if s.price > 0 %}₹{{ "%.2f"|format(s.price) }}{% else %}<span class="text-success">Free</span>{% endif %}
+          </td>
+          <td class="text-sm">{{ s.estimated_minutes }} min</td>
+          <td>
+            <span class="badge-status badge-{{ 'active' if s.is_active else 'inactive' }}">
+              {{ 'Active' if s.is_active else 'Inactive' }}
+            </span>
+          </td>
+          <td>
+            <div class="d-flex gap-1">
+              <button class="btn btn-xs btn-outline-primary" onclick='openEdit({{ services_json[loop.index0] | tojson }})'>
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-xs btn-outline-danger" onclick="deleteService({{ s.id }}, '{{ s.name }}')">
+                <i class="bi bi-trash3"></i>
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-center text-muted py-5">
+            <i class="bi bi-card-checklist fs-2 d-block mb-2"></i>No services yet
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Service Modal -->
+<div class="modal fade" id="serviceModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-700" id="serviceModalTitle">Add Service</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editServiceId"/>
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label">Service Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="fSvcName" placeholder="e.g. General Consultation"/>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description</label>
+            <textarea class="form-control" id="fSvcDesc" rows="2" placeholder="Optional description…"></textarea>
+          </div>
+          <div class="col-6">
+            <label class="form-label">Price (₹)</label>
+            <input type="number" class="form-control" id="fSvcPrice" min="0" step="0.01" placeholder="0 = Free"/>
+          </div>
+          <div class="col-6">
+            <label class="form-label">Est. Time (minutes)</label>
+            <input type="number" class="form-control" id="fSvcTime" min="1" placeholder="10"/>
+          </div>
+          <div class="col-12">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="fSvcActive" checked/>
+              <label class="form-check-label" for="fSvcActive">Active</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" onclick="saveService()">
+          <span class="spinner-border spinner-border-sm me-1 d-none" id="svcSpin"></span>
+          Save Service
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let editSvcId = null;
+
+function openAdd() {
+  editSvcId = null;
+  document.getElementById('serviceModalTitle').textContent = 'Add Service';
+  document.getElementById('fSvcName').value  = '';
+  document.getElementById('fSvcDesc').value  = '';
+  document.getElementById('fSvcPrice').value = '0';
+  document.getElementById('fSvcTime').value  = '10';
+  document.getElementById('fSvcActive').checked = true;
+}
+
+function openEdit(s) {
+  editSvcId = s.id;
+  document.getElementById('serviceModalTitle').textContent = 'Edit Service';
+  document.getElementById('fSvcName').value  = s.name;
+  document.getElementById('fSvcDesc').value  = s.description || '';
+  document.getElementById('fSvcPrice').value = s.price;
+  document.getElementById('fSvcTime').value  = s.estimated_minutes;
+  document.getElementById('fSvcActive').checked = s.is_active;
+  new bootstrap.Modal(document.getElementById('serviceModal')).show();
+}
+
+async function saveService() {
+  const spin = document.getElementById('svcSpin');
+  spin.classList.remove('d-none');
+  const body = {
+    name: document.getElementById('fSvcName').value.trim(),
+    description: document.getElementById('fSvcDesc').value.trim() || null,
+    price: parseFloat(document.getElementById('fSvcPrice').value) || 0,
+    estimated_minutes: parseInt(document.getElementById('fSvcTime').value) || 10,
+    is_active: document.getElementById('fSvcActive').checked,
+  };
+  try {
+    if (editSvcId) {
+      await apiRequest(`/org/services/${editSvcId}`, 'PUT', body);
+      showToast('Service updated');
+    } else {
+      await apiRequest('/org/services', 'POST', body);
+      showToast('Service created');
+    }
+    bootstrap.Modal.getInstance(document.getElementById('serviceModal'))?.hide();
+    setTimeout(() => location.reload(), 600);
+  } catch(e) {
+    showToast(e.message, 'danger');
+  } finally { spin.classList.add('d-none'); }
+}
+
+async function deleteService(id, name) {
+  confirmAction(`Delete service "${name}"?`, async () => {
+    try {
+      await apiRequest(`/org/services/${id}`, 'DELETE');
+      showToast(`"${name}" deleted`, 'warning');
+      setTimeout(() => location.reload(), 600);
+    } catch(e) { showToast(e.message, 'danger'); }
+  });
+}
+</script>
+{% endblock %}

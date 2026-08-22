@@ -1,0 +1,51 @@
+<!-- templates/shared/admin_sidebar.html -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon"><i class="bi bi-skip-forward-fill"></i></div>
+    <div class="brand-text">
+      <span class="brand-name">Skip Line</span>
+      <span class="brand-role">Admin Panel</span>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav mt-3">
+    <div class="nav-section-label">Main</div>
+    <a href="/admin/dashboard" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+      <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+    </a>
+
+    <div class="nav-section-label">Management</div>
+    <a href="/admin/organizations" class="nav-item {% if active_page == 'organizations' %}active{% endif %}">
+      <i class="bi bi-building"></i><span>Organizations</span>
+      {% if pending_count and pending_count > 0 %}
+        <span class="badge bg-warning text-dark ms-auto">{{ pending_count }}</span>
+      {% endif %}
+    </a>
+    <a href="/admin/users" class="nav-item {% if active_page == 'users' %}active{% endif %}">
+      <i class="bi bi-people"></i><span>Users</span>
+    </a>
+    <a href="/admin/tokens" class="nav-item {% if active_page == 'tokens' %}active{% endif %}">
+      <i class="bi bi-ticket-perforated"></i><span>Tokens</span>
+    </a>
+
+    <div class="nav-section-label">Reports</div>
+    <a href="/admin/reports/revenue" class="nav-item {% if active_page == 'revenue' %}active{% endif %}">
+      <i class="bi bi-currency-rupee"></i><span>Revenue</span>
+    </a>
+    <a href="/admin/reports/queue" class="nav-item {% if active_page == 'queue_stats' %}active{% endif %}">
+      <i class="bi bi-bar-chart-line"></i><span>Queue Stats</span>
+    </a>
+
+    <div class="nav-section-label">System</div>
+    <a href="/admin/settings" class="nav-item {% if active_page == 'settings' %}active{% endif %}">
+      <i class="bi bi-gear"></i><span>Settings</span>
+    </a>
+    <a href="/admin/change-password" class="nav-item {% if active_page == 'change_password' %}active{% endif %}">
+      <i class="bi bi-shield-lock"></i><span>Change Password</span>
+    </a>
+    <a href="/auth/logout" class="nav-item text-danger">
+      <i class="bi bi-box-arrow-right"></i><span>Logout</span>
+    </a>
+  </nav>
+</aside>
+<div class="sidebar-overlay d-lg-none" id="sidebarOverlay"></div>

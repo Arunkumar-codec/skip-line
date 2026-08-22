@@ -1,0 +1,72 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Generated files (mount as Docker volumes in production)
+qr_codes/
+receipts/
+logs/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# SSL certificates
+nginx/ssl/*.pem
+nginx/ssl/*.crt
+nginx/ssl/*.key
+
+# Secrets
+.env
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated files
+qr_codes/*
+receipts/*
+uploads/*
+
+# Keep empty directories
+!qr_codes/.gitkeep
+!receipts/.gitkeep
+!uploads/.gitkeep
+
+# Editors and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

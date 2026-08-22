@@ -1,0 +1,93 @@
+{% extends "shared/base.html" %}
+{% block title %}Token History{% endblock %}
+{% block sidebar %}{% include "shared/user_sidebar.html" %}{% endblock %}
+
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-info d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_user.name[0].upper() if current_user else 'U' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_user.name.split()[0] if current_user else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_user.email if current_user else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i>Profile</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Token History</h1>
+    <p class="page-subtitle">All your past and active tokens</p>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="table-responsive">
+    <table class="sl-table">
+      <thead>
+        <tr>
+          <th>Token</th>
+          <th>Organization</th>
+          <th>Counter</th>
+          <th>Status</th>
+          <th>Booked</th>
+          <th>Completed</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for token in tokens %}
+        <tr>
+          <td class="fw-700 text-primary" style="font-size:1.1rem">{{ token.token_number }}</td>
+          <td class="text-sm">{{ token.organization.name if token.organization else '—' }}</td>
+          <td class="text-sm">{{ token.counter.counter_name if token.counter else '—' }}</td>
+          <td><span class="badge-status badge-{{ token.status }}">{{ token.status | replace('_',' ') }}</span></td>
+          <td class="text-xs text-muted">{{ token.booked_at.strftime('%d %b %Y %H:%M') if token.booked_at else '—' }}</td>
+          <td class="text-xs text-muted">{{ token.completed_at.strftime('%d %b %Y %H:%M') if token.completed_at else '—' }}</td>
+          <td>
+            <div class="d-flex gap-1">
+              {% if token.status in ['waiting','called','in_progress','on_hold'] %}
+              <a href="/user/track/{{ token.id }}" class="btn btn-xs btn-primary">
+                <i class="bi bi-broadcast"></i> Track
+              </a>
+              {% endif %}
+              <a href="/tokens/{{ token.id }}/receipt" class="btn btn-xs btn-outline-secondary" target="_blank">
+                <i class="bi bi-file-pdf"></i>
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-5">
+            <i class="bi bi-clock-history fs-2 d-block mb-2"></i>No token history yet
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pages > 1 %}
+  <div class="d-flex justify-content-center py-3">
+    <nav>
+      <ul class="pagination pagination-sm mb-0">
+        {% for p in range(1, pages+1) %}
+        <li class="page-item {% if p == page %}active{% endif %}">
+          <a class="page-link" href="?page={{ p }}">{{ p }}</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,183 @@
+{% extends "shared/base.html" %}
+{% block title %}Reports{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Reports & Analytics</h1>
+    <p class="page-subtitle">Queue performance and service statistics</p>
+  </div>
+  <div class="d-flex gap-2">
+    <select class="form-select form-select-sm" id="periodSelect" onchange="changePeriod()">
+      <option value="7">Last 7 Days</option>
+      <option value="30" selected>Last 30 Days</option>
+      <option value="90">Last 90 Days</option>
+    </select>
+  </div>
+</div>
+
+<!-- Stat row -->
+<div class="row g-3 mb-4 fade-in-up">
+  <div class="col-6 col-lg-3">
+    <div class="stat-card">
+      <p class="stat-label">Total Tokens</p>
+      <p class="stat-value">{{ stats.total_tokens }}</p>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card">
+      <p class="stat-label">Completed</p>
+      <p class="stat-value text-success">{{ stats.completed_today }}</p>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card">
+      <p class="stat-label">Revenue (₹)</p>
+      <p class="stat-value">{{ "%.0f"|format(stats.revenue) }}</p>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card">
+      <p class="stat-label">Avg Wait</p>
+      <p class="stat-value">{{ stats.avg_wait_minutes }}<small class="fs-5 fw-400 text-muted">m</small></p>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 fade-in-up">
+  <!-- Daily token volume -->
+  <div class="col-lg-8">
+    <div class="content-card h-100">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl">Daily Token Volume</h2>
+      </div>
+      <div class="p-4">
+        <div class="chart-container" style="height:280px">
+          <canvas id="dailyChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Token status breakdown -->
+  <div class="col-lg-4">
+    <div class="content-card h-100">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl">Token Status</h2>
+      </div>
+      <div class="p-4">
+        <div class="chart-container" style="height:200px">
+          <canvas id="statusChart"></canvas>
+        </div>
+        <div class="mt-3">
+          {% for status, count in status_breakdown.items() %}
+          <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+            <span class="badge-status badge-{{ status }} text-xs">{{ status.replace('_',' ') }}</span>
+            <strong class="text-sm">{{ count }}</strong>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top services -->
+  <div class="col-lg-6">
+    <div class="content-card">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl">Top Services</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead><tr><th>Service</th><th>Tokens</th><th>Revenue</th></tr></thead>
+          <tbody>
+            {% for row in top_services %}
+            <tr>
+              <td class="fw-600 text-sm">{{ row.name }}</td>
+              <td class="text-sm">{{ row.count }}</td>
+              <td class="text-sm">{% if row.revenue > 0 %}₹{{ "%.0f"|format(row.revenue) }}{% else %}—{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">No data</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Counter performance -->
+  <div class="col-lg-6">
+    <div class="content-card">
+      <div class="card-header-sl">
+        <h2 class="card-title-sl">Counter Performance</h2>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead><tr><th>Counter</th><th>Served</th><th>Avg Time</th></tr></thead>
+          <tbody>
+            {% for row in counter_stats %}
+            <tr>
+              <td class="fw-600 text-sm">{{ row.name }}</td>
+              <td class="text-sm">{{ row.served }}</td>
+              <td class="text-sm">{{ row.avg_min }}m</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">No data</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const dailyLabels = {{ daily_labels | tojson | default('[]') }};
+const dailyData   = {{ daily_data   | tojson | default('[]') }};
+const statusLabels = {{ status_breakdown.keys() | list | tojson | default('[]') }};
+const statusData   = {{ status_breakdown.values() | list | tojson | default('[]') }};
+
+createBarChart(
+  document.getElementById('dailyChart').getContext('2d'),
+  dailyLabels,
+  [{
+    label: 'Tokens',
+    data: dailyData,
+    backgroundColor: 'rgba(26,86,219,.7)',
+    borderRadius: 6,
+  }]
+);
+
+createDoughnutChart(
+  document.getElementById('statusChart').getContext('2d'),
+  statusLabels,
+  statusData,
+  ['#1a56db','#7e3af2','#d97706','#059669','#6b7280','#dc2626','#f59e0b']
+);
+</script>
+{% endblock %}
