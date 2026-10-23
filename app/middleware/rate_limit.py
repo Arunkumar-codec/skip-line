@@ -28,8 +28,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return request.client.host if request.client else "unknown"
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Skip rate limiting for static files and health checks
-        if request.url.path.startswith(("/static", "/health", "/qr_codes", "/receipts")):
+        # Skip rate limiting for static files, health checks, and testing
+        from app.config import settings
+        if settings.app_env == "testing" or request.url.path.startswith(("/static", "/health", "/qr_codes", "/receipts")):
             return await call_next(request)
 
         ip = self._get_client_ip(request)

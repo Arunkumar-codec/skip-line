@@ -78,7 +78,7 @@ async def change_password(
 
 # ── Organization search ───────────────────────────────────────────────────────
 
-@router.get("/organizations/search", response_model=APIResponse)
+@router.get("/organizations/search", response_model=PaginatedResponse[OrgSearchResult])
 async def search_orgs(
     q: str = None,
     org_type: str = None,
@@ -120,7 +120,7 @@ async def book_token(
 # ── Token history (JSON API) ──────────────────────────────────────────────────
 # Renamed from /tokens/history to /api/tokens/history to avoid shadowing HTML view.
 
-@router.get("/api/tokens/history", response_model=APIResponse, dependencies=[Depends(get_current_user)])
+@router.get("/api/tokens/history", response_model=PaginatedResponse[TokenRead], dependencies=[Depends(get_current_user)])
 async def token_history_api(
     page: int = 1,
     per_page: int = 20,
@@ -137,6 +137,7 @@ async def token_history_api(
 
 # ── Live tracking ─────────────────────────────────────────────────────────────
 
+@router.get("/tokens/{token_id}/track", response_model=APIResponse)
 @router.get("/api/tokens/{token_id}/track", response_model=APIResponse)
 async def track_token(token_id: int, db: AsyncSession = Depends(get_db)):
     try:

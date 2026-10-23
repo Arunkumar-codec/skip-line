@@ -1,0 +1,362 @@
+{% extends "shared/base.html" %}
+{% block title %}Staff & Employees{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Staff & Employee Management</h1>
+    <p class="page-subtitle">Manage individual staff accounts, branch assignments, and role permissions</p>
+  </div>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#employeeModal" onclick="openAddEmployee()">
+    <i class="bi bi-person-plus me-1"></i>Add Staff Member
+  </button>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+    <h5 class="fw-700 mb-0">Active Team ({{ employees | length }})</h5>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light text-xs text-uppercase">
+        <tr>
+          <th>Name & Email</th>
+          <th>Employee Code</th>
+          <th>Branch</th>
+          <th>Assigned Roles</th>
+          <th>Status</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in employees %}
+        <tr>
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <div class="rounded-circle bg-primary-subtle text-primary d-flex align-items-center justify-content-center fw-700"
+                   style="width:36px;height:36px;font-size:.85rem">
+                {{ e.name[0].upper() }}
+              </div>
+              <div>
+                <span class="fw-600 d-block text-dark">{{ e.name }}</span>
+                <span class="text-muted text-xs">{{ e.email }}</span>
+              </div>
+            </div>
+          </td>
+          <td><span class="badge bg-light text-dark border">{{ e.employee_code }}</span></td>
+          <td>
+            <span class="text-sm">
+              <i class="bi bi-geo-alt text-muted me-1"></i>
+              {{ branch_map.get(e.branch_id, 'Branch #' ~ e.branch_id) }}
+            </span>
+          </td>
+          <td>
+            {% set roles = emp_roles_map.get(e.id, []) %}
+            {% if roles %}
+              {% for r in roles %}
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle me-1 mb-1">{{ r.name }}</span>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted text-xs">No roles assigned</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge-status badge-{{ 'active' if e.is_active else 'inactive' }}">
+              {{ 'Active' if e.is_active else 'Inactive' }}
+            </span>
+          </td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-secondary me-1" title="Manage Roles"
+                    onclick='openRoleModal({{ e.id }}, {{ e.name | tojson }})'>
+              <i class="bi bi-shield-lock"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-primary me-1" title="Edit"
+                    onclick='openEditEmployee({{ employees_json[loop.index0] | tojson }})'>
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-danger" title="Delete"
+                    onclick="deleteEmployee({{ e.id }}, '{{ e.name }}')">
+              <i class="bi bi-trash3"></i>
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-center py-5 text-muted">
+            <i class="bi bi-people mb-2" style="font-size:2.5rem;display:block"></i>
+            <span class="fw-600">No staff accounts registered yet</span>
+            <p class="text-xs mb-3">Add employees to assign counters and operate queue stages.</p>
+            <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#employeeModal" onclick="openAddEmployee()">
+              Add First Staff Account
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Add/Edit Employee Modal -->
+<div class="modal fade" id="employeeModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="employeeModalTitle">Add Staff Member</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="employeeForm" onsubmit="saveEmployee(event)">
+        <div class="modal-body">
+          <input type="hidden" id="empId"/>
+          <div class="mb-3">
+            <label class="form-label">Full Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="empName" required placeholder="e.g. Alice Operator"/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email Address <span class="text-danger">*</span></label>
+            <input type="email" class="form-control" id="empEmail" required placeholder="alice@example.com"/>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label">Employee Code <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="empCode" required placeholder="e.g. EMP-001"/>
+            </div>
+            <div class="col-6">
+              <label class="form-label">Branch <span class="text-danger">*</span></label>
+              <select class="form-select" id="empBranch" required>
+                <option value="" disabled selected>Select Branch...</option>
+                {% for b in branches %}
+                <option value="{{ b.id }}">{{ b.name }} ({{ b.branch_code }})</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="mb-3" id="passwordGroup">
+            <label class="form-label">Password <span class="text-danger" id="pwdAsterisk">*</span></label>
+            <input type="password" class="form-control" id="empPassword" placeholder="Minimum 6 characters"/>
+            <div class="form-text" id="pwdHelp">Leave blank on edit to preserve current password.</div>
+          </div>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="empActive" checked/>
+            <label class="form-check-label" for="empActive">Account Active</label>
+          </div>
+          <div id="empError" class="alert alert-danger d-none py-2 text-sm"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="saveEmpBtn">Save Staff Member</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Assign Role Modal -->
+<div class="modal fade" id="roleModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Role Assignment for <span id="roleModalEmpName" class="text-primary"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="roleModalEmpId"/>
+        <div class="mb-3">
+          <label class="form-label fw-600">Assign New Role</label>
+          <div class="input-group">
+            <select class="form-select" id="roleSelect">
+              <option value="" disabled selected>Choose role...</option>
+              {% for r in available_roles %}
+              <option value="{{ r.id }}">{{ r.name }} ({{ r.code }})</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-primary" onclick="assignRole()">Assign</button>
+          </div>
+        </div>
+        <hr>
+        <h6 class="fw-600 text-sm mb-2">Currently Assigned Roles</h6>
+        <div id="assignedRolesList" class="d-flex flex-column gap-2">
+          <div class="text-muted text-xs">Loading roles...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let editingEmpId = null;
+
+function openAddEmployee() {
+  editingEmpId = null;
+  document.getElementById('employeeModalTitle').textContent = 'Add Staff Member';
+  document.getElementById('employeeForm').reset();
+  document.getElementById('empId').value = '';
+  document.getElementById('empPassword').required = true;
+  document.getElementById('pwdAsterisk').classList.remove('d-none');
+  document.getElementById('empActive').checked = true;
+  document.getElementById('empError').classList.add('d-none');
+}
+
+function openEditEmployee(e) {
+  editingEmpId = e.id;
+  document.getElementById('employeeModalTitle').textContent = 'Edit Staff Member';
+  document.getElementById('empId').value = e.id;
+  document.getElementById('empName').value = e.name;
+  document.getElementById('empEmail').value = e.email;
+  document.getElementById('empCode').value = e.employee_code;
+  document.getElementById('empBranch').value = e.branch_id;
+  document.getElementById('empPassword').value = '';
+  document.getElementById('empPassword').required = false;
+  document.getElementById('pwdAsterisk').classList.add('d-none');
+  document.getElementById('empActive').checked = e.is_active;
+  document.getElementById('empError').classList.add('d-none');
+  new bootstrap.Modal(document.getElementById('employeeModal')).show();
+}
+
+async function saveEmployee(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById('saveEmpBtn');
+  const err = document.getElementById('empError');
+  btn.disabled = true;
+  err.classList.add('d-none');
+
+  const payload = {
+    name: document.getElementById('empName').value.trim(),
+    email: document.getElementById('empEmail').value.trim(),
+    employee_code: document.getElementById('empCode').value.trim(),
+    branch_id: parseInt(document.getElementById('empBranch').value),
+    is_active: document.getElementById('empActive').checked,
+  };
+  const pwd = document.getElementById('empPassword').value;
+  if (pwd) payload.password = pwd;
+
+  try {
+    const url = editingEmpId ? `/org/employees/${editingEmpId}` : '/org/employees';
+    const method = editingEmpId ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method: method,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to save staff member');
+    location.reload();
+  } catch (errVal) {
+    err.textContent = errVal.message;
+    err.classList.remove('d-none');
+    btn.disabled = false;
+  }
+}
+
+async function deleteEmployee(id, name) {
+  if (!confirm(`Are you sure you want to delete staff account "${name}"?`)) return;
+  try {
+    const res = await fetch(`/org/employees/${id}`, {method: 'DELETE'});
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.detail || 'Failed to delete staff account');
+      return;
+    }
+    location.reload();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function openRoleModal(empId, empName) {
+  document.getElementById('roleModalEmpId').value = empId;
+  document.getElementById('roleModalEmpName').textContent = empName;
+  await loadAssignedRoles(empId);
+  new bootstrap.Modal(document.getElementById('roleModal')).show();
+}
+
+async function loadAssignedRoles(empId) {
+  const container = document.getElementById('assignedRolesList');
+  container.innerHTML = '<div class="text-muted text-xs">Loading roles...</div>';
+  try {
+    const res = await fetch(`/org/employees/${empId}/roles`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    const roles = data.data;
+    if (roles.length === 0) {
+      container.innerHTML = '<div class="text-muted text-xs">No roles assigned. Choose a role above to assign.</div>';
+      return;
+    }
+    container.innerHTML = roles.map(r => `
+      <div class="d-flex justify-content-between align-items-center p-2 border rounded">
+        <div>
+          <span class="fw-600 text-sm">${r.name}</span>
+          <span class="text-muted text-xs d-block">${r.description || ''}</span>
+        </div>
+        <button class="btn btn-sm btn-outline-danger" onclick="revokeRole(${empId}, ${r.id})">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    `).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="text-danger text-xs">${e.message}</div>`;
+  }
+}
+
+async function assignRole() {
+  const empId = document.getElementById('roleModalEmpId').value;
+  const roleSelect = document.getElementById('roleSelect');
+  const roleId = roleSelect.value;
+  if (!roleId) return;
+
+  try {
+    const res = await fetch(`/org/employees/${empId}/roles`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role_id: parseInt(roleId)}),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.detail || 'Failed to assign role');
+      return;
+    }
+    await loadAssignedRoles(empId);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function revokeRole(empId, roleId) {
+  if (!confirm('Remove this role assignment?')) return;
+  try {
+    const res = await fetch(`/org/employees/${empId}/roles/${roleId}`, {method: 'DELETE'});
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.detail || 'Failed to remove role');
+      return;
+    }
+    await loadAssignedRoles(empId);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+</script>
+{% endblock %}

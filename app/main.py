@@ -39,8 +39,10 @@ from app.routers import (
     views_admin,
     views_org,
     views_user,
+    views_employee,
 )
 from app.services.admin_service import seed_default_admin
+from app.services.rbac_service import seed_rbac_defaults
 
 
 # ── Lifespan ─────────────────────────────────────────────────────────────────
@@ -63,15 +65,20 @@ async def lifespan(app: FastAPI):
     # Seed default admin if none exists
     await seed_default_admin()
 
+    # Seed default RBAC permissions and roles
+    await seed_rbac_defaults()
+
     # Start background WebSocket heartbeat
-    import asyncio
-    from app.websocket.heartbeat import heartbeat_task
-    asyncio.create_task(heartbeat_task())
+    from app.websocket.heartbeat import start_heartbeat, stop_heartbeat
+    await start_heartbeat()
 
     logger.info("Skip Line is ready.")
     yield
 
     logger.info("Shutting down…")
+    await stop_heartbeat()
+    from app.services.notification_service import wait_for_background_tasks
+    await wait_for_background_tasks(timeout=2.0)
     await engine.dispose()
 
 
@@ -129,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(views_admin.router,          prefix="/admin",         tags=["Admin UI"])
     app.include_router(views_org.router,            prefix="/org",           tags=["Org UI"])
     app.include_router(views_user.router,           prefix="/user",          tags=["User UI"])
+    app.include_router(views_employee.router,       prefix="/employee",      tags=["Employee UI"])
 
     # ── Exception handlers ───────────────────────────────────────────────────
     @app.exception_handler(404)
@@ -160,7 +168,7 @@ def create_app() -> FastAPI:
     async def logout_all():
         from fastapi.responses import RedirectResponse as RR
         resp = RR("/", status_code=302)
-        for c in ("admin_token", "org_token", "user_token"):
+        for c in ("admin_token", "org_token", "user_token", "employee_token"):
             resp.delete_cookie(c)
         return resp
 

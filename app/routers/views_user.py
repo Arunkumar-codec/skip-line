@@ -7,12 +7,14 @@ Jinja2 HTML page routes for the user portal and public-facing pages.
 import math
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.schemas.common import PaginatedResponse
+from app.schemas.token import TokenRead
 from app.services import user_service, token_service
 from app.utils.jwt import create_access_token, decode_token
 from models.counter import Counter
@@ -140,12 +142,33 @@ async def organizations(
 
 # ── Token history ─────────────────────────────────────────────────────────────
 
-@router.get("/tokens/history", response_class=HTMLResponse)
+@router.get("/tokens/history")
 async def token_history(
     request: Request,
     page: int = 1,
+    per_page: int = 20,
     db: AsyncSession = Depends(get_db),
 ):
+    # API client content-negotiation: return JSON if Authorization header or Accept: application/json
+    auth_header = request.headers.get("authorization")
+    accept_header = request.headers.get("accept", "")
+    if auth_header or "application/json" in accept_header:
+        token = auth_header.replace("Bearer ", "").strip() if auth_header else request.cookies.get("user_token")
+        if not token:
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        payload = decode_token(token)
+        if not payload or payload.get("role") != "user":
+            return JSONResponse(status_code=403, content={"detail": "User access required"})
+        user = await db.get(User, int(payload["sub"]))
+        if not user or not user.is_active:
+            return JSONResponse(status_code=401, content={"detail": "User not found or inactive"})
+        tokens, total = await user_service.get_user_token_history(db, user.id, page, per_page)
+        return PaginatedResponse(
+            total=total, page=page, per_page=per_page,
+            pages=math.ceil(total / per_page) if total else 1,
+            data=[TokenRead.model_validate(t) for t in tokens],
+        )
+
     user, redir = await _get_user_or_redirect(request, db)
     if redir:
         return redir

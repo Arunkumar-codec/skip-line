@@ -70,3 +70,15 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Archives & Temporary Test Results
+*.zip
+*.tar.gz
+*.rar
+*-results.txt
+test-results.txt
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3

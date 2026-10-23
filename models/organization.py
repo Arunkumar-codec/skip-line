@@ -68,6 +68,12 @@ class Organization(Base, TimestampMixin):
     verifications: Mapped[list["OrganizationVerification"]] = relationship(
         "OrganizationVerification", back_populates="organization", cascade="all, delete-orphan"
     )
+    branches: Mapped[list["Branch"]] = relationship(
+        "Branch", back_populates="organization", cascade="all, delete-orphan"
+    )
+    employees: Mapped[list["Employee"]] = relationship(
+        "Employee", back_populates="organization", cascade="all, delete-orphan"
+    )
     services: Mapped[list["Service"]] = relationship(
         "Service", back_populates="organization", cascade="all, delete-orphan"
     )

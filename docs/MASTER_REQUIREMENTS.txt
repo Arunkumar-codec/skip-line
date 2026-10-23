@@ -1,0 +1,878 @@
+SKIPLINE: THE SMART QUEUE SYSTEM
+COMPREHENSIVE FUNCTIONAL AND TECHNICAL REQUIREMENTS
+Version: 1.0
+Status: Draft requirements consolidated from the project discussions
+Purpose: Baseline for synopsis review, codebase audit, phased implementation, and final verification
+
+======================================================================
+1. DOCUMENT PURPOSE AND SCOPE
+======================================================================
+
+This document consolidates the requirements discussed for SkipLine: The Smart Queue System. It is intended to serve as the working requirements baseline before reviewing the college synopsis and current project ZIP, finalizing the architecture, implementing the application in phases, and conducting end-to-end testing.
+
+The requirements below reflect the features requested so far. They do not imply that these features already exist in the current codebase. Existing functionality must be inspected and verified before implementation decisions are made.
+
+The final scope, terminology, and priorities must be reconciled with the official project synopsis and the current source code. Where a detailed policy has not yet been decided, this document identifies a configurable or open design decision rather than silently assuming an answer.
+
+Primary goals:
+- Provide a queue and service-workflow platform usable by people with different levels of digital literacy.
+- Support online pre-booking, on-site self-service kiosk booking, and employee-assisted booking.
+- Support both manual UI interactions and Agentic AI chat interactions using one authoritative backend.
+- Support organizations with configurable services, counters, multi-stage workflows, queue rules, and token formats.
+- Protect customers from fake organizations and fraudulent paid services through a controlled verification process.
+- Support free and paid services, online payments, cash collection records, receipts, refunds where authorized, and financial reconciliation.
+- Give customers accurate booking status, stage status, token information, and waiting-time estimates.
+- Keep actions permission-controlled, organization-scoped, auditable, and safe under concurrent use.
+- Implement in phases and test the integrated application comprehensively after implementation.
+
+======================================================================
+2. CORE DESIGN PRINCIPLES
+======================================================================
+
+2.1 One platform, multiple channels
+The online website, kiosk, employee counter interface, and AI chatbot must use the same backend booking, token, queue, payment, and workflow services. They must not maintain separate conflicting booking systems.
+
+2.2 One source of truth
+A booking, visit, payment, token, and stage status must be stored in the authoritative backend. Every authorized interface must retrieve the current state from that source.
+
+2.3 Channel independence
+A booking belongs to the customer and service journey, not to the channel used to create it. A customer must be able to start with manual booking and later use the chatbot, or start with the chatbot and later use the website, without losing or duplicating the booking.
+
+2.4 Inclusive access
+Customers who cannot or do not want to use online booking must still be able to obtain service through an on-site kiosk or an employee-assisted counter.
+
+2.5 No invented operational facts
+The AI assistant must not invent organizations, services, counters, fees, token IDs, payment status, availability, booking confirmations, or live waiting-time estimates. Such information must come from authorized backend tools and current records.
+
+2.6 Security by default
+Access to customer details, organization configuration, financial actions, and administrative functions must be authorized by the backend. Hiding a button in the user interface is not sufficient security.
+
+2.7 Auditability
+Sensitive actions—including approvals, suspensions, payment-related actions, stage recalls, token changes, and privileged account operations—must be recorded with actor, time, target, action, and reason where applicable.
+
+2.8 Configurable workflows
+Organizations should be able to configure their service stages and permitted transitions within platform policy, without needing developers to change application code for each organization.
+
+======================================================================
+3. USER TYPES, PANELS, AND RESPONSIBILITIES
+======================================================================
+
+3.1 Platform Super Admin
+The platform must have exactly four authorized Super Admin accounts. These accounts oversee organization verification, counter and service verification, fraud review, suspensions, and platform-level audit activity. Account provisioning and recovery must be controlled and secure.
+
+3.2 Organization Admin
+An organization admin manages the organization’s profile, approved locations, services, counters, workflow stages, staff accounts, employee roles, token settings, queue settings, applicable fees, and organization-level reports, subject to platform approval and permissions.
+
+3.3 Employee / Counter Staff
+Employees use individual accounts. Their permissions depend on assigned roles, counters, services, and organization. They may handle queue operations, visitor-assisted bookings, cash collection, payment-related workflows permitted by policy, stage completion, token calls, recalls, and shift reporting.
+
+3.4 Customer / Visitor
+Customers may book online, manage their bookings, check live status, interact with the AI assistant, receive confirmations, and use supported cancellation or rescheduling functions. Visitors without online bookings must be able to use a kiosk or ask an employee for assistance.
+
+3.5 Agentic AI Assistant
+The AI assistant is a channel for discovering approved services, checking current availability, retrieving a customer’s authorized bookings, answering questions from verified platform data, and performing permitted actions through backend tools. It must follow confirmation and authorization rules.
+
+3.6 Kiosk user
+A kiosk user is a visitor using an on-site self-service screen. The user may be a registered customer or a guest, depending on the organization’s configuration and the approved privacy policy.
+
+3.7 Public queue-display viewer
+A public display viewer can see permitted queue information such as currently serving tokens, next tokens, counters, service names, and safe status information. Public displays must not expose private customer details.
+
+======================================================================
+4. EXACTLY FOUR PLATFORM SUPER ADMIN ACCOUNTS
+======================================================================
+
+4.1 Account count and provisioning
+- The platform must support exactly four authorized Super Admin accounts.
+- Public registration must never create a Super Admin account.
+- Organization Admins and ordinary employees must not be able to promote themselves or others to Super Admin.
+- Super Admin account creation, replacement, recovery, or deactivation must follow a restricted platform-level procedure.
+- The implementation must define how the four-account rule behaves if an account is compromised, an administrator leaves, or an account must be replaced. The rule is a count of authorized accounts, not a shared login.
+- Each Super Admin must have a separate account. Credentials must not be shared.
+
+4.2 Authentication and security
+- Use strong authentication and multi-factor authentication where supported.
+- Enforce server-side authorization on every privileged endpoint.
+- Apply secure session/token handling, login throttling, recovery safeguards, and security logging.
+- Avoid default or hard-coded production credentials.
+- Restrict sensitive account-management operations to an explicitly authorized process.
+
+4.3 Responsibilities
+Super Admins may, according to their assigned platform permissions:
+- Review organization applications and supporting evidence.
+- Approve, reject, or request more information.
+- Review counters, services, declared prices, and payment configuration.
+- Approve or reject paid-service activation.
+- Review complaints and suspicious payment/refund patterns.
+- Suspend or reinstate organizations, counters, or services where authorized.
+- View platform-level audit records and verification status.
+- Record a reason for decisions and maintain the review history.
+
+4.4 Approval policy
+- The platform must define whether ordinary approvals require one Super Admin or multiple Super Admins.
+- High-risk actions—such as changing a payment destination, approving a high-risk paid service, or reinstating a suspended paid service—should support a second-person review or dual approval.
+- The four-account limit does not automatically mean all four administrators must approve every request.
+- The approval policy must be configurable or explicitly documented before implementation.
+
+======================================================================
+5. ORGANIZATION ONBOARDING AND FRAUD PREVENTION
+======================================================================
+
+5.1 Organization application
+An organization must submit the information required by its organization type. This may include legal/registered name where applicable, organization type, address/location, authorized representative, contact details, supporting documents, and declared services. The precise evidence requirements should be defined by the platform and relevant use case.
+
+5.2 Verification states
+At minimum, define clear states such as:
+- Draft / Incomplete
+- Submitted
+- Under Review
+- More Information Required
+- Approved
+- Rejected
+- Suspended
+- Reinstatement Under Review
+
+The exact state model should be confirmed during architecture design.
+
+5.3 Review process
+- The organization admin submits the application.
+- A Super Admin reviews the application and supporting evidence.
+- The reviewer approves, rejects, or requests more information and records the decision reason.
+- The organization can view its review status and respond to requests.
+- Changes to important organization information may trigger re-verification.
+- All decisions must be auditable.
+
+5.4 Counter and service verification
+- An approved organization is not automatically allowed to activate every new counter or paid service.
+- Counters and services must have their own verification/activation states.
+- Review counter name, location, assigned service, responsible team, operational details, and any other evidence appropriate to the organization.
+- Review paid-service description, fee, payment setup, and authorization to offer the service.
+- Public booking and collection must be blocked for unapproved or suspended services.
+- An organization may have an approved status while one of its new counters or services remains pending.
+
+5.5 Fraud response
+- Provide a process for customer complaints, suspicious activity review, and evidence recording.
+- Permit authorized suspension of an organization, counter, or service, with reason and audit history.
+- Define what happens to existing bookings and payments when a service is suspended.
+- Avoid silently deleting records associated with investigations.
+- Establish a process for appeal or reinstatement if the project scope requires it.
+
+======================================================================
+6. ORGANIZATION PROFILE, SERVICES, LOCATIONS, AND COUNTERS
+======================================================================
+
+6.1 Organization configuration
+Organization Admins can maintain approved organization information and operational settings, subject to platform restrictions and verification requirements.
+
+6.2 Services
+Each service should support fields such as:
+- Service name and description.
+- Active/inactive state.
+- Free or paid classification.
+- Fee and currency, if applicable.
+- Booking dates/hours and availability rules.
+- Capacity and token/queue policy.
+- Estimated service duration.
+- Required and optional workflow stages.
+- Cancellation, rescheduling, and no-show rules.
+- Applicable payment and refund policy.
+- Verification/approval status.
+
+The final required fields should be determined by the synopsis and detailed schema design.
+
+6.3 Counters
+Organizations may create and manage counters subject to their permissions. Each counter should be associated with its organization and configured service(s), staff assignments, operational schedule, queue settings, and activation status.
+
+6.4 Counter assignment
+- Employees must only operate counters and services assigned to them.
+- Assignment changes must be auditable.
+- Inactive, unverified, closed, or suspended counters must not receive new queue entries unless an explicitly authorized exception is defined.
+
+======================================================================
+7. THREE BOOKING CHANNELS FOR INCLUSIVE ACCESS
+======================================================================
+
+7.1 Online pre-booking
+Customers can:
+- Create or use a profile and sign in securely.
+- Search for approved organizations and services.
+- Select a date, service, location, counter or available slot as supported.
+- View availability and applicable charges before confirming.
+- Complete required booking steps and payment.
+- Receive a booking reference, token information, and confirmation.
+- View bookings, status, stage progress, payment details, and permitted actions later.
+
+The system must distinguish an actual confirmed booking from a draft, pending payment, or incomplete request.
+
+7.2 Self-service kiosk
+A visitor arriving at an organization without an online booking must be able to generate a token at an on-site self-service screen when capacity and organization rules permit.
+
+The kiosk should:
+- Present a simple, accessible interface with clear instructions and large controls.
+- Support organization-configured languages where implemented.
+- Allow the visitor to select an available service.
+- Collect only the contact details necessary for the selected flow.
+- Support guest booking if allowed by policy.
+- Show whether the service is free or paid and disclose fees before payment.
+- Check live capacity before issuing a token.
+- Use the shared booking and token engine.
+- Issue a valid token and booking reference.
+- Print a physical ticket if a printer is available and configured.
+- Show service/counter instructions and an estimated waiting time where a defensible estimate is available.
+- Provide a clear recovery path if the kiosk, printer, network, or payment step fails.
+- Avoid leaving personal data visible after a session; clear the kiosk session securely.
+
+The precise identity/contact fields, guest-booking policy, payment methods, languages, and printer support must be confirmed during design.
+
+7.3 Employee-assisted booking
+Visitors who cannot use online booking or the kiosk must be able to request assistance from an employee.
+
+The employee interface should:
+- Search/select the correct approved organization service.
+- Enter only necessary visitor details.
+- Check availability and capacity.
+- Create the booking through the shared backend.
+- Record cash or online payment information only through authorized workflows.
+- Issue a token and booking reference.
+- Print or provide the ticket as supported.
+- Explain the queue and estimated wait.
+- Enforce the same rules as online and kiosk booking.
+
+7.4 Shared queue
+All three booking channels must use the same authoritative capacity checks, booking engine, token allocator, and queue records. Channel-specific code must not bypass capacity or payment checks.
+
+7.5 Queue fairness
+Queue ordering, appointments, walk-ins, priority groups, and exceptions must follow explicit organization policy. The system should not promise that all tokens are served strictly in numerical order if the organization configures a different lawful/operational policy.
+
+======================================================================
+8. CUSTOMER PROFILE AND BOOKING LIFECYCLE
+======================================================================
+
+8.1 Customer identity
+- Registered customers should be able to access their own bookings after authentication.
+- Guest bookings may be supported for kiosk and other suitable flows.
+- Guest booking retrieval must use a safe verification method such as a secure reference plus a suitable verification factor; a guessable booking ID alone must not expose private details.
+- The platform must avoid duplicate customer accounts where possible, without incorrectly merging different people.
+
+8.2 Booking information
+A booking should have an internal unique identifier separate from its public booking reference and display token. It may include customer/guest reference, organization, service, date, channel, status, payment state, workflow stages, and timestamps.
+
+8.3 Lifecycle states
+Define explicit states appropriate to the flow, for example:
+- Draft
+- Awaiting Payment
+- Confirmed
+- Waiting
+- In Service
+- Partially Completed / In Progress
+- Completed
+- Cancelled
+- No-show
+- Failed / Expired
+
+Not every booking needs every state. The final lifecycle must be defined before implementation.
+
+8.4 Booking changes
+- Customers can perform only actions permitted by service policy.
+- Rescheduling or cancellation must update the authoritative booking and all relevant views.
+- A booking change must not silently create duplicate active tokens.
+- Payment/refund implications must be handled explicitly.
+- Changes must be auditable.
+
+======================================================================
+9. TOKEN ID FORMAT AND SAFE ALLOCATION
+======================================================================
+
+9.1 Configurable format
+Organization Admins should be able to configure a display token format per counter or queue, subject to platform rules. Example format: AB16-be-000. This is an example, not a fixed required format.
+
+9.2 Generation rules
+- Token IDs must be generated server-side.
+- Concurrent requests must not receive duplicate active or historically conflicting IDs where uniqueness is required.
+- Use database constraints and transaction-safe allocation.
+- Do not rely only on client-side counting.
+- Define the token sequence scope: per day, per counter, per service, per organization, or another explicit scope.
+- Define reset behavior (daily, never, or other configured policy).
+- Preserve already issued token IDs if the format changes; do not retroactively rename historic tickets.
+- Keep an internal booking/queue identifier separate from the public display token.
+- Define what happens when a sequence reaches its maximum configured width.
+- Ensure recalls and returns to a previous stage do not unintentionally create duplicate active queue entries.
+
+9.3 Token states
+Token/queue entries should have explicit states such as Waiting, Called, Serving, Recalled, Transferred, Completed, Cancelled, No-show, or other states required by the final workflow. The final state machine must prevent invalid transitions.
+
+======================================================================
+10. CONFIGURABLE MULTI-STAGE SERVICE WORKFLOWS
+======================================================================
+
+10.1 Purpose
+Organizations must be able to configure a service as a sequence or permitted graph of stages rather than being limited to a single queue. Different organization types can use different workflows.
+
+10.2 Example clinic workflow
+An illustrative clinic workflow could be:
+1. Registration and basic measurements: collect required basic information, height, weight, and other configured details.
+2. Consultation: examination or consultation by the appropriate healthcare provider.
+3. Pharmacy: dispensing or processing prescribed medicines, if applicable.
+4. Prescription advice / visit completion: provide authorized instructions and follow-up information.
+
+This is an example only. The organization must define its actual stages and policies. The software coordinates the process and does not make clinical decisions.
+
+10.3 Stage configuration
+An authorized Organization Admin should be able to:
+- Create, rename, reorder, activate, and deactivate stages.
+- Assign a stage to one or more counters, teams, or eligible employees.
+- Define whether the stage is mandatory, optional, or conditional.
+- Define conditions under which the stage applies.
+- Define required completion fields or evidence.
+- Define whether payment is required at the stage.
+- Configure estimated service duration and queue policy.
+- Define permitted next stages, return paths, and terminal completion.
+- Define recall/revisit policy and permissions.
+- Define the behavior when a counter is closed or unavailable.
+- Configure stage-specific instructions visible to authorized users.
+
+10.4 Mandatory and optional stages
+- Mandatory stages cannot be bypassed through ordinary actions.
+- Optional stages may be skipped when permitted by the service workflow.
+- Conditional stages apply only when their configured conditions are satisfied.
+- Authorized overrides, if permitted, must require appropriate permission, a reason, and an audit record.
+- A stage being optional must not automatically authorize bypassing legal, safety, or organization-specific mandatory checks.
+
+10.5 Stage transitions
+- The system must validate each requested transition against the configured workflow.
+- Employees must not advance a visit through an unauthorized transition.
+- Stage completion should record the responsible employee, time, status, and required outcome data.
+- The system should update the visit's current stage and queue entry consistently.
+- Repeated requests and concurrent actions must not create duplicate active stage entries.
+
+10.6 Recall to a previous stage
+Organizations need a controlled way to send a visitor back to an earlier stage, for example to correct registration information or revisit a previous service step.
+
+Support two distinct operations:
+A. Recall/reopen an existing stage queue entry where the configured policy allows it.
+B. Create a new queue entry/token for a previous stage while linking it to the same visit.
+
+The chosen operation must be explicit. It must record source stage, destination stage, employee, timestamp, reason, and relevant prior state. The platform must preserve the full visit history and avoid duplicate active queue entries. Sensitive recalls may require supervisor authorization.
+
+10.7 Stage history
+Maintain a chronological history of stage entry, calls, service start, completion, skips, recalls, transfers, overrides, and failures. The authorized customer view may show suitable progress details without exposing internal staff-only notes.
+
+10.8 Workflow versioning
+Changes to a workflow should not corrupt visits already in progress. The implementation must define whether existing visits retain the workflow version they started with or are migrated through a controlled process. Existing historical stage records must remain interpretable.
+
+======================================================================
+11. EMPLOYEE ACCOUNTS, ROLES, AND COUNTER OPERATIONS
+======================================================================
+
+11.1 Individual accounts
+Every employee must have an individual account. Shared staff accounts should not be used for traceable financial or operational actions.
+
+11.2 Employee management
+Organization Admins may create employee accounts and assign permitted roles and responsibilities within their organization. They must not grant platform Super Admin privileges.
+
+11.3 Example roles
+Roles should be configurable or selected from an approved set, for example:
+- Registration staff
+- Queue operator
+- Paid-service/payment counter staff
+- Free-service counter staff
+- Pharmacy/service desk staff
+- Supervisor
+- Organization auditor/report viewer
+
+The final roles and permissions should follow least privilege.
+
+11.4 Permission enforcement
+- Every API action must validate the actor's role, organization, assigned counter/service, and the action being attempted.
+- A staff member must not access another organization's records.
+- A staff member assigned to a free-service counter must not automatically gain permission to manage paid services or refunds.
+- Employees must not alter their own privileges unless explicitly authorized.
+- Sensitive corrections, refunds, and overrides should have stricter permissions.
+
+11.5 Queue operations
+Depending on permissions, employees may call the next token, mark service started, complete a stage, skip an optional stage, transfer a visitor, recall a previous stage, mark no-show, or close a queue. Every state change must follow the state machine and be audited.
+
+======================================================================
+12. PAYMENTS, CASH HANDLING, RECEIPTS, AND REFUNDS
+======================================================================
+
+12.1 Free and paid services
+Each service must clearly identify whether it is free or paid. Fees must be shown before a customer commits to a paid booking. The final currency and payment-provider choices must be defined during implementation planning.
+
+12.2 Payment states
+Use explicit payment states appropriate to the provider, such as Pending, Authorized, Successful, Failed, Cancelled, Refund Pending, Partially Refunded, and Refunded. The final model should match provider semantics and avoid treating a client redirect as proof of payment.
+
+12.3 Online payments
+- Initiate payments through the configured provider.
+- Verify payment server-side using provider-supported verification and/or signed webhooks.
+- Validate amount, currency, order/reference, and booking association.
+- Make webhook handling idempotent.
+- Do not mark payment successful solely because the browser or AI assistant says it succeeded.
+- Prevent duplicate payment processing and duplicate booking confirmation.
+- Store provider references and the minimum required transaction data safely.
+- Do not store raw card credentials.
+- Define what happens when payment succeeds but booking confirmation or network response fails.
+
+12.4 Cash payments
+Where cash is accepted:
+- Only authorized employees can record a cash payment.
+- Record the amount, currency, employee, counter, organization, booking/receipt reference, and timestamp.
+- Provide a receipt or receipt reference.
+- Prevent unauthorized edits or deletion of a cash record.
+- Corrections should use an auditable reversal/adjustment workflow.
+- Booking confirmation rules must specify when a cash payment is considered accepted.
+
+12.5 Refunds and reversals
+- Refunds must be limited to authorized roles and supported provider capabilities.
+- Record refund amount, reason, actor, time, original payment reference, and provider result.
+- Avoid duplicate refunds through idempotency and state checks.
+- Define whether supervisor approval is required and for what thresholds or cases.
+- Do not delete the original payment history.
+
+12.6 Receipts and PDFs
+A confirmation ticket/PDF may include:
+- Organization name and relevant verified contact/location details.
+- Booking reference and display token.
+- Service and visit date/time.
+- Current stage or initial instructions as appropriate.
+- Counter or arrival instructions where known.
+- Fee and payment status/reference where applicable.
+- Estimated waiting time and the time that estimate was generated.
+- Any appropriate QR code or verification reference, if implemented.
+
+PDF access must be authorized or use a secure, unguessable access mechanism. Avoid exposing private data through public URLs.
+
+======================================================================
+13. END-OF-DAY CASH AND COUNTER RECONCILIATION
+======================================================================
+
+13.1 Shift records
+Record employee, counter, shift start/end, and the transactions attributed to that shift.
+
+13.2 Report contents
+A daily/shift report should distinguish:
+- Cash collections.
+- Online payment totals, shown separately from physical cash.
+- Refunds and cash reversals.
+- Expected net cash.
+- Actual cash counted by the responsible employee.
+- Difference/variance between expected and counted cash.
+- Paid tokens/bookings and free tokens/bookings.
+- Transaction counts and receipt references.
+- Open, pending, failed, or disputed payment records.
+- Review status and supervisor notes where permitted.
+
+13.3 Reconciliation behavior
+- Expected cash should be derived from recorded transactions and approved adjustments, not typed as an arbitrary value.
+- The employee enters the actual counted amount.
+- The system calculates and flags any discrepancy.
+- A supervisor or authorized reviewer investigates and records the outcome.
+- Reconciliation must not rewrite or delete the original transaction records.
+- Reports must respect organization and counter permissions.
+- Define timezone, business-day boundaries, shift overlap, and treatment of transactions around midnight.
+
+======================================================================
+14. CUSTOMER BOOKING ACCESS ACROSS MANUAL AND AI CHANNELS
+======================================================================
+
+14.1 Core requirement
+Customers can move between manual UI and AI chat without losing access to existing booking information. The same booking remains authoritative regardless of its original channel.
+
+14.2 Manual booking followed by AI chat
+If a customer books manually and later opens the chatbot, the chatbot should securely find and summarize their existing authorized booking rather than create a new one.
+
+14.3 AI booking followed by manual UI
+If a customer books through the chatbot and later opens the website or dashboard, the booking must appear in their booking list with current status and permitted actions.
+
+14.4 Information available through either channel
+Subject to authorization and privacy rules, both channels should show:
+- Booking reference and token ID.
+- Organization and service.
+- Visit date/time.
+- Booking status.
+- Current workflow stage.
+- Completed, pending, skipped, or recalled stages where appropriate.
+- Queue status, counter information, and current waiting-time estimate.
+- Payment status and authorized receipt/payment references.
+- Permitted cancellation, rescheduling, or other actions.
+
+14.5 Channel tracking
+Store the original booking channel separately from the channel currently being used. Example:
+- Original channel: Manual website.
+- Current interaction channel: AI chatbot.
+Changing interaction channel must not change the booking's identity or create a duplicate.
+
+14.6 Identity and access
+- A signed-in customer may access only their authorized records.
+- A guest must complete the configured verification flow.
+- The AI assistant must not reveal booking data based only on a guessed reference.
+- The system should avoid returning sensitive data in chat when the user has not been properly authenticated.
+- Use the same backend authorization rules for manual and AI access.
+
+14.7 Shared action rules
+Cancellation, rescheduling, payment, and other mutations must call the same domain services regardless of channel. Each action must enforce current policy, idempotency, capacity, and audit requirements.
+
+14.8 Synchronization
+- A change from an employee, kiosk, website, or chatbot must be visible to the other authorized views.
+- Use real-time updates where practical and re-fetch authoritative data when reconnecting or refreshing.
+- Clearly indicate stale estimates or unavailable live updates.
+- Avoid treating a cached AI conversation as the current source of booking truth.
+
+14.9 New booking confirmation
+The chatbot must distinguish asking about an existing booking from requesting a new booking. Before creating a new booking, it should gather required details, verify availability and fees, explain the selected option, and obtain explicit customer confirmation.
+
+======================================================================
+15. AGENTIC AI ASSISTANT
+======================================================================
+
+15.1 Purpose
+The AI assistant should do more than provide generic chat responses. It should use controlled backend tools to discover approved organizations/services, check availability, retrieve the customer's authorized bookings, and perform permitted booking operations.
+
+15.2 Tool-connected flow
+A typical new-booking flow:
+1. Understand the customer's request.
+2. Search the platform for matching approved organizations and services.
+3. Ask clarifying questions for missing information.
+4. Retrieve current availability and applicable fees.
+5. Explain the proposed organization, service, date/time, and other material booking details.
+6. Ask the customer to confirm before final booking.
+7. Call the shared booking backend with validated details.
+8. Verify the backend result.
+9. Return the actual booking reference/token and confirmation/PDF access if generated.
+10. Continue to retrieve live status when the customer asks follow-up questions.
+
+15.3 Existing-booking flow
+- Identify/authenticate the customer using a secure mechanism.
+- Retrieve existing bookings from the backend.
+- Ask which booking if multiple records match.
+- Return current authorized status and stage progress.
+- Do not create a booking unless the customer explicitly requests and confirms a new booking.
+
+15.4 Safety and reliability
+- Never invent organizations, services, counters, prices, token IDs, payment status, or availability.
+- Do not claim a booking succeeded until the backend confirms success.
+- Use backend validation and permissions for every action.
+- Use idempotency keys or equivalent protections for retryable booking/payment actions.
+- Handle tool failure, timeouts, rate limits, and ambiguous results clearly.
+- Do not bypass mandatory stages or organization rules.
+- Protect sensitive customer and healthcare information.
+- Keep the AI from deciding clinical matters; it should report verified workflow information and defer clinical decisions to authorized staff.
+
+15.5 Conversation history
+Conversation history may help interpret context but is not the authoritative booking database. On a status question or action, the assistant must query the current backend state.
+
+======================================================================
+16. WAITING-TIME ESTIMATION AND LIVE QUEUE STATUS
+======================================================================
+
+16.1 Estimate principles
+Waiting-time estimates must be based on actual queue and service data where available. The platform must not invent a precise estimate when insufficient data exists.
+
+16.2 Inputs to consider
+The estimate service may consider:
+- Number of eligible tokens ahead.
+- Actual service durations from recent history.
+- Service/stage type.
+- Number of active counters and their availability.
+- Staff breaks, counter closures, and temporary interruptions.
+- Appointments, priority rules, and configured queue order.
+- Skips, no-shows, cancellations, transfers, and recalls.
+- Current service progress and historical variability.
+
+16.3 Initial implementation
+Start with a transparent, explainable baseline based on current queue position and available service-duration data. Improve it later with historical statistics if sufficient data is available. AI should not be used to fabricate the estimate.
+
+16.4 Estimate presentation
+Show an estimate or a reasonable range when possible. Include when it was last updated. Explain that it is an estimate, not a guarantee, if the user-facing context requires it.
+
+16.5 PDF snapshot and live updates
+The printed/PDF ticket should record the estimate at the time of generation and the timestamp of that estimate. The live website/chat should retrieve updated estimates as the queue changes. The ticket snapshot must not be misrepresented as continuously updated.
+
+16.6 Accuracy monitoring
+Store sufficient timestamps and events to compare predicted wait with actual service start. Track estimation error to evaluate and improve the algorithm.
+
+16.7 Public queue display
+A public display may show current serving token, next tokens, counter, service and permitted status. Do not show full names, phone numbers, sensitive details, or private clinical information.
+
+======================================================================
+17. PUBLIC QUEUE DISPLAY
+======================================================================
+
+- Provide a public display mode suitable for a monitor or screen at the organization.
+- Show the currently serving token and next token(s), with counter/service labels where configured.
+- Update when a token is called, service starts, a token is recalled, or a queue changes.
+- Use polling or real-time delivery according to architecture and infrastructure.
+- Display only public-safe information.
+- Handle disconnection gracefully and avoid presenting stale data as current.
+- Define display behavior for multiple counters, multiple stages, language support, and closed services.
+
+======================================================================
+18. ACCESSIBILITY, PRIVACY, AND CUSTOMER EXPERIENCE
+======================================================================
+
+18.1 Accessibility
+- Use clear labels, readable text, high-contrast controls, and large touch targets on kiosks.
+- Keep common flows short and provide clear error recovery.
+- Support keyboard accessibility for web interfaces where applicable.
+- Provide understandable language selection and instructions.
+- Ensure an employee-assisted route remains available.
+
+18.2 Data minimization
+- Collect only the personal information needed for the chosen service.
+- Define retention and deletion policies consistent with project requirements and applicable obligations.
+- Restrict healthcare and other sensitive details to authorized users.
+- Avoid showing private data on kiosk screens after a session ends.
+- Do not expose customer data through public queue displays or predictable document links.
+
+18.3 Error handling
+Provide understandable messages for unavailable services, full queues, invalid details, failed payments, printer errors, network interruption, expired sessions, and denied access. Do not expose stack traces, secrets, or internal system details to users.
+
+======================================================================
+19. SECURITY, TENANT ISOLATION, AND AUDIT
+======================================================================
+
+19.1 Organization isolation
+Every organization-owned record and API operation must be scoped to the authenticated user's authorized organization. A user must not gain access by changing an organization ID in a request.
+
+19.2 Server-side checks
+Validate authentication, role, organization, counter assignment, object ownership, current state, and allowed transition on the server for every protected operation.
+
+19.3 Input and secrets
+- Validate and normalize inputs.
+- Keep production secrets out of source control.
+- Do not rely on insecure default passwords or secret keys.
+- Use environment-specific configuration and secure secret management appropriate to deployment.
+- Avoid logging passwords, access tokens, payment secrets, or unnecessary personal data.
+
+19.4 Audit events
+Record important events such as organization submission/review, service/counter approval, privilege changes, payment/refund actions, booking mutations, token changes, workflow overrides, recalls, suspensions, and reconciliation decisions.
+
+Audit records should include actor, action, target, timestamp, outcome, and reason/context where appropriate. Access to audit records must be restricted. Ordinary users must not be able to alter or delete audit history.
+
+19.5 Abuse protection
+Consider login throttling, rate limiting, anti-automation safeguards where appropriate, replay/idempotency protection, secure session handling, and monitoring for suspicious patterns.
+
+======================================================================
+20. RELIABILITY, CONCURRENCY, AND RECOVERY
+======================================================================
+
+- Use database transactions for booking confirmation, token allocation, payment state changes, stage transitions, and reconciliation-sensitive actions.
+- Enforce database uniqueness and integrity constraints in addition to application checks.
+- Handle simultaneous bookings without overbooking capacity or issuing conflicting tokens.
+- Use idempotency for requests that may be retried, especially payments, booking creation, refunds, and webhook processing.
+- Define behavior for partial failures, including payment success followed by network timeout, booking confirmation failure, printer failure, and kiosk disconnection.
+- Provide safe retries that do not duplicate a booking, charge, refund, or queue entry.
+- Use backups and a documented recovery approach appropriate to the final deployment scope.
+- Record errors in a way that supports troubleshooting without exposing secrets or private data.
+
+======================================================================
+21. REPORTING AND OPERATIONAL ANALYTICS
+======================================================================
+
+Subject to role and data access rules, reports may include:
+- Booking/token volume by service, counter, date, and channel.
+- Free versus paid service counts.
+- Queue waiting and service durations.
+- Stage completion, skip, transfer, and recall rates.
+- Counter/staff workload.
+- Payment success/failure/refund totals.
+- Cash reconciliation differences.
+- No-show and cancellation rates.
+- Waiting-time estimate accuracy.
+- Organization verification and complaint status.
+
+Reports must distinguish measured data from estimates and must not expose information beyond the viewer's authorization.
+
+======================================================================
+22. PDF AND PRINTED DOCUMENTS
+======================================================================
+
+- Generate confirmation tickets from authoritative booking data.
+- Include the booking reference and display token, organization/service, visit date/time, applicable counter/stage instructions, payment status where relevant, and estimate timestamp.
+- Use an authorized download or a secure, unguessable link.
+- Avoid placing unnecessary sensitive data in a ticket that may be viewed by others.
+- Kiosk and employee-assisted flows should support printing where a printer is configured.
+- Define whether the PDF is generated immediately or on demand and how access is revoked if required.
+- A PDF estimate is a snapshot; live estimates must be retrieved from the application or chatbot.
+
+======================================================================
+23. SUGGESTED IMPLEMENTATION PHASES
+======================================================================
+
+These phases are a tentative implementation sequence. They must be adjusted after the official synopsis and current codebase have been reviewed.
+
+Phase 1 — Requirements and synopsis reconciliation
+- Read the complete synopsis and extract required features, actors, constraints, and deliverables.
+- Map each requirement in this document to the synopsis.
+- Record confirmed requirements, missing decisions, and scope conflicts.
+
+Phase 2 — Existing codebase audit
+- Inspect the ZIP while preserving its directory structure.
+- Map existing models, migrations, APIs, authentication, UI, services, tests, and deployment.
+- Run existing tests and record failures before modifying code.
+- Identify reusable components and technical debt.
+
+Phase 3 — Architecture and data model
+- Define entities, relationships, status machines, tenant isolation, API contracts, event/audit model, and transaction boundaries.
+- Define the exact four Super Admin provisioning policy.
+- Define token sequencing and workflow versioning.
+- Define security and payment-provider assumptions.
+
+Phase 4 — Authentication, roles, and authorization
+- Implement or verify customer, employee, organization admin, and platform Super Admin access.
+- Enforce permissions server-side.
+- Enforce the four Super Admin account rule.
+
+Phase 5 — Organization, service, counter, and verification
+- Implement onboarding, verification states, evidence review, counter/service approval, and suspension controls.
+
+Phase 6 — Shared booking and token engine
+- Implement capacity-safe booking and transaction-safe token allocation.
+- Add online, kiosk, and employee-assisted booking paths using the same backend.
+
+Phase 7 — Multi-stage workflow engine
+- Implement configurable stages, mandatory/optional/conditional rules, transitions, completion history, recalls, and prior-stage returns.
+
+Phase 8 — Payments, receipts, and reconciliation
+- Implement verified online payment integration as configured, authorized cash recording, receipts, refund controls, and end-of-day reporting.
+
+Phase 9 — Customer experience and synchronization
+- Implement profile/bookings pages, booking history, status updates, cancellation/rescheduling rules, kiosk flow, public display, and PDF tickets.
+
+Phase 10 — Waiting-time estimates
+- Implement an explainable baseline, estimate timestamps, live refresh, and accuracy tracking.
+
+Phase 11 — Agentic AI integration
+- Implement approved-service discovery, availability checks, secure existing-booking retrieval, explicit booking confirmation, and controlled backend tools.
+- Verify manual-to-AI and AI-to-manual continuity.
+
+Phase 12 — Integration, security, and end-to-end testing
+- Test complete workflows across all channels and roles.
+- Test concurrency, payment failures, access-control boundaries, recalls, and recovery scenarios.
+- Resolve failures and rerun regression tests.
+
+Phase 13 — Deployment, documentation, and demonstration
+- Prepare environment configuration, database migrations, seed/provisioning instructions, deployment guide, user/admin instructions, architecture diagrams, and demo scenarios.
+- Never include real production secrets in the repository or deliverable ZIP.
+
+======================================================================
+24. ACCEPTANCE AND TEST REQUIREMENTS
+======================================================================
+
+The project should not be considered complete solely because the application starts. Acceptance must include automated and manual tests for the following scenarios.
+
+24.1 Super Admin and verification
+- Public registration cannot create a Super Admin.
+- Exactly four authorized Super Admin accounts are provisioned under the defined policy.
+- Unauthorized users cannot access platform administration APIs.
+- An unverified organization cannot publish bookable services.
+- An unapproved counter or paid service cannot accept new bookings/payments.
+- Verification decisions, rejections, suspensions, and reinstatements are auditable.
+
+24.2 Booking channels
+- A valid online booking appears in the shared backend and customer account.
+- A kiosk booking uses the same capacity and token rules.
+- An employee-assisted booking uses the same capacity and token rules.
+- Simultaneous booking requests do not overbook capacity or create conflicting tokens.
+- A failed kiosk printer does not silently duplicate a booking when retried.
+
+24.3 Token allocation
+- Concurrent token requests produce valid unique identifiers within the configured scope.
+- Token format changes do not rewrite historical tokens.
+- Reset behavior matches the documented policy.
+- Recall/return actions do not create duplicate active queue entries.
+
+24.4 Workflow
+- Mandatory stages cannot be bypassed by ordinary staff.
+- Optional and conditional stages behave according to configuration.
+- Invalid transitions are rejected server-side.
+- Authorized recalls preserve stage history and require a reason where configured.
+- Workflow changes do not corrupt in-progress visits.
+- Concurrent employee actions do not cause inconsistent stage state.
+
+24.5 Payments and cash
+- A client-side claim of payment success cannot mark an online payment paid.
+- Provider verification and webhook retries are handled safely.
+- Repeated payment callbacks do not duplicate payment effects.
+- Cash entries include employee/counter/time/reference.
+- Unauthorized staff cannot issue refunds or edit payment history.
+- Reconciliation separates cash from online payments and flags differences.
+
+24.6 Cross-channel continuity
+- A manual booking can be retrieved through authenticated AI chat.
+- An AI-created booking appears in the manual customer dashboard.
+- Employee/kiosk changes are reflected in the other authorized views.
+- Asking about an existing booking does not create a new booking.
+- Customer A cannot retrieve Customer B's booking.
+- Cached conversation history cannot override current backend status.
+
+24.7 Waiting time and public display
+- Estimates use available queue/service data and show a timestamp.
+- Estimates update when the queue materially changes.
+- The PDF records the estimate snapshot and timestamp.
+- Public display does not reveal private customer information.
+- Insufficient data does not produce a falsely precise estimate.
+
+24.8 Security and reliability
+- Cross-organization data access is denied.
+- Unauthorized API calls are rejected even if manually constructed.
+- Secrets and sensitive details are not exposed in logs or user-facing errors.
+- Retry scenarios do not duplicate bookings, charges, refunds, or stage entries.
+- Database migrations, backup/recovery steps, and deployment configuration are tested to the extent required by the project scope.
+
+24.9 Final verification
+- Run unit, API/integration, and end-to-end tests.
+- Record commands, pass/fail counts, and known limitations.
+- Fix defects and rerun affected tests plus regression tests.
+- Perform manual checks of every major role and channel.
+- Document any external service or payment integration that cannot be tested against a live provider in the development environment.
+
+======================================================================
+25. OPEN DECISIONS TO CONFIRM BEFORE FINAL ARCHITECTURE
+======================================================================
+
+The following details have not yet been fully specified and must be confirmed against the synopsis or decided explicitly:
+
+1. Exact official project title and synopsis scope.
+2. Supported deployment model and whether the first release is web-only, responsive web, or includes native mobile apps.
+3. Required organization categories and verification evidence for each category.
+4. Super Admin account provisioning, replacement, recovery, and dual-approval policy.
+5. Whether all organizations require verification before any listing or whether some listing information can be shown while pending.
+6. Guest booking identity/contact requirements and secure booking retrieval method.
+7. Token sequence scope, reset policy, format syntax, and overflow behavior.
+8. Booking capacity model: time slots, daily token quota, live walk-in queue, appointments, or a combination.
+9. Queue priority policy, appointment handling, and no-show rules.
+10. Stage workflow versioning and rules for changing workflows while visits are in progress.
+11. Exact permissions for employee roles and supervisor approval thresholds.
+12. Payment provider(s), supported methods, currency, settlement model, and webhook setup.
+13. Cash acceptance policy and receipt format.
+14. Refund/cancellation policy and authorization thresholds.
+15. Kiosk languages, hardware/printer support, and offline behavior expectations.
+16. Customer notification channels such as email, SMS, or messaging integrations.
+17. Data retention, privacy, and any applicable legal/compliance requirements.
+18. Waiting-time estimation approach and the minimum data required to display an estimate.
+19. Whether public queue screens are required for the initial release.
+20. Whether clinical, healthcare, or other sensitive workflows are in the official project scope or are illustrative examples only.
+21. Hosting, monitoring, backup, and deployment expectations.
+22. Final project evaluation criteria and demonstration requirements.
+
+======================================================================
+26. FINAL PROJECT SUCCESS CRITERIA
+======================================================================
+
+SkipLine should be considered successful when it provides a reliable and inclusive queue-management experience in which:
+
+- Customers can pre-book online, obtain tokens at a kiosk, or receive employee assistance.
+- All booking channels share one backend and one consistent queue.
+- Organizations configure their own services, counters, stages, and permitted workflow rules.
+- Customers can move between manual UI and AI chat while seeing the same current booking.
+- The platform restricts access to exactly four authorized Super Admin accounts under a secure provisioning policy.
+- Organizations, counters, and paid services pass appropriate verification before activation.
+- Token allocation, payment processing, and stage transitions are safe under concurrent requests and retries.
+- Cash and online transactions are traceable and reconcilable.
+- Waiting-time estimates are grounded in available operational data and presented honestly.
+- Sensitive operations are permission-controlled and auditable.
+- Automated and manual end-to-end tests demonstrate the expected behavior.
+- Documentation accurately describes what has been implemented, tested, and remains limited.
+
+END OF REQUIREMENTS DOCUMENT

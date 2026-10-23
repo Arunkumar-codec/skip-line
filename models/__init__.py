@@ -10,6 +10,8 @@ Import all ORM models here so that:
 from models.admin import Admin                              # noqa: F401
 from models.organization import Organization               # noqa: F401
 from models.organization_verification import OrganizationVerification  # noqa: F401
+from models.branch import Branch                           # noqa: F401
+from models.employee import Employee                       # noqa: F401
 from models.user import User                               # noqa: F401
 from models.service import Service                         # noqa: F401
 from models.counter import Counter                         # noqa: F401
@@ -19,11 +21,19 @@ from models.payment import Payment                         # noqa: F401
 from models.notification import Notification               # noqa: F401
 from models.queue_log import QueueLog                      # noqa: F401
 from models.setting import Setting                         # noqa: F401
+from models.permission import Permission                   # noqa: F401
+from models.role import Role                               # noqa: F401
+from models.role_permission import RolePermission           # noqa: F401
+from models.employee_role_assignment import EmployeeRoleAssignment  # noqa: F401
+from models.session import Session                         # noqa: F401
+from models.audit_log import AuditLog                      # noqa: F401
 
 __all__ = [
     "Admin",
     "Organization",
     "OrganizationVerification",
+    "Branch",
+    "Employee",
     "User",
     "Service",
     "Counter",
@@ -33,4 +43,10 @@ __all__ = [
     "Notification",
     "QueueLog",
     "Setting",
+    "Permission",
+    "Role",
+    "RolePermission",
+    "EmployeeRoleAssignment",
+    "Session",
+    "AuditLog",
 ]

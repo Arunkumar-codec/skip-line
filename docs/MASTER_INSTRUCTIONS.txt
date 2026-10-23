@@ -1,0 +1,5 @@
+Before proceeding with SkipLine development, locate and read my master instruction file and complete project requirements file in the `docs/` directory.
+
+Treat the master instructions as the rules for how you must work, and treat the project requirements as the specification for what must be built.
+
+Read both documents completely. Do not modify code or begin implementation until you confirm that you understand the instructions and requirements. If either document is missing or their contents conflict, report the issue and wait for my direction.

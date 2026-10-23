@@ -14,14 +14,20 @@ from loguru import logger
 from app.config import settings
 
 
-def create_access_token(subject: int, role: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    subject: int,
+    role: str,
+    expires_delta: Optional[timedelta] = None,
+    extra_claims: Optional[dict] = None,
+) -> str:
     """
     Create a signed JWT.
 
     Args:
-        subject: Database ID of the authenticated entity (admin, org, or user).
-        role: One of "admin" | "organization" | "user".
+        subject: Database ID of the authenticated entity (admin, org, user, or employee).
+        role: One of "admin" | "organization" | "user" | "employee".
         expires_delta: Override the default expiry window.
+        extra_claims: Optional additional claims to include in the payload.
 
     Returns:
         Signed JWT string.
@@ -35,6 +41,8 @@ def create_access_token(subject: int, role: str, expires_delta: Optional[timedel
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 

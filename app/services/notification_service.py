@@ -98,6 +98,41 @@ async def send_email(to: str, subject: str, body_html: str) -> None:
         logger.error("Email send failed to {}: {}", to, exc)
 
 
+# ── Background Task Management ────────────────────────────────────────────────
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _track_background_task(coro, name: Optional[str] = None) -> asyncio.Task:
+    """Create and track a background task with exception logging."""
+    task = asyncio.create_task(coro, name=name)
+    _background_tasks.add(task)
+
+    def _on_done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc:
+                logger.error("Background task '{}' failed: {}", t.get_name(), exc)
+
+    task.add_done_callback(_on_done)
+    return task
+
+
+async def wait_for_background_tasks(timeout: float = 3.0) -> None:
+    """Await or cancel pending background tasks gracefully during shutdown/teardown."""
+    if not _background_tasks:
+        return
+    tasks = list(_background_tasks)
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Timed out waiting for {} background task(s); cancelling...", len(tasks))
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 # ── Notification templates ────────────────────────────────────────────────────
 
 async def notify_token_created(db: AsyncSession, token: Token, user: Optional[User]) -> None:
@@ -108,11 +143,14 @@ async def notify_token_created(db: AsyncSession, token: Token, user: Optional[Us
         f"Current queue position: {token.queue_position}."
     )
     await create_in_app(db, user.id, NotificationType.TOKEN_CREATED, msg, token.id, "Token Booked")
-    asyncio.create_task(send_email(
-        to=user.email,
-        subject=f"[Skip Line] Token {token.token_number} Confirmed",
-        body_html=f"<p>Hi {user.name},</p><p>{msg}</p><p>Track your token in the app.</p>",
-    ))
+    _track_background_task(
+        send_email(
+            to=user.email,
+            subject=f"[Skip Line] Token {token.token_number} Confirmed",
+            body_html=f"<p>Hi {user.name},</p><p>{msg}</p><p>Track your token in the app.</p>",
+        ),
+        name=f"email_token_created_{token.id}",
+    )
 
 
 async def notify_token_called(db: AsyncSession, token: Token, user: Optional[User]) -> None:
@@ -120,11 +158,14 @@ async def notify_token_called(db: AsyncSession, token: Token, user: Optional[Use
         return
     msg = f"Your token <strong>{token.token_number}</strong> has been called. Please proceed to the counter."
     await create_in_app(db, user.id, NotificationType.TOKEN_CALLED, msg, token.id, "Your Turn!")
-    asyncio.create_task(send_email(
-        to=user.email,
-        subject=f"[Skip Line] {token.token_number} — Your Turn!",
-        body_html=f"<p>Hi {user.name},</p><p>{msg}</p>",
-    ))
+    _track_background_task(
+        send_email(
+            to=user.email,
+            subject=f"[Skip Line] {token.token_number} — Your Turn!",
+            body_html=f"<p>Hi {user.name},</p><p>{msg}</p>",
+        ),
+        name=f"email_token_called_{token.id}",
+    )
 
 
 async def notify_queue_nearing(db: AsyncSession, token: Token, user: Optional[User], ahead: int) -> None:

@@ -26,7 +26,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.services import org_service, token_service, payment_service
+from app.services import (
+    branch_service,
+    employee_service,
+    org_service,
+    payment_service,
+    rbac_service,
+    token_service,
+)
 from app.utils.jwt import create_access_token, decode_token
 from models.counter import Counter, CounterStatus
 from models.organization import Organization, OrgStatus
@@ -498,6 +505,81 @@ async def change_password_submit(request: Request, db: AsyncSession = Depends(ge
     if not ok:
         return RedirectResponse("/org/profile?error=Current+password+incorrect", status_code=302)
     return RedirectResponse("/org/profile?success=1", status_code=302)
+
+
+# ── Branches & Staff UI ───────────────────────────────────────────────────────
+
+@router.get("/branches", response_class=HTMLResponse)
+async def branches_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+    branches = await branch_service.list_branches(db, org.id)
+    branches_json = [
+        {
+            "id": b.id,
+            "name": b.name,
+            "branch_code": b.branch_code,
+            "address": b.address,
+            "city": b.city,
+            "state": b.state,
+            "pincode": b.pincode,
+            "is_active": b.is_active,
+        }
+        for b in branches
+    ]
+    return templates.TemplateResponse(
+        "org/branches.html",
+        {
+            "request": request,
+            "current_org": org,
+            "active_page": "branches",
+            "branches": branches,
+            "branches_json": branches_json,
+        },
+    )
+
+
+@router.get("/employees", response_class=HTMLResponse)
+async def employees_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+    branches = await branch_service.list_branches(db, org.id)
+    branch_map = {b.id: f"{b.name} ({b.branch_code})" for b in branches}
+    employees = await employee_service.list_employees(db, org.id)
+    available_roles = await rbac_service.list_roles(db, org.id)
+
+    emp_roles_map = {}
+    for emp in employees:
+        roles = await rbac_service.get_employee_roles(db, org.id, emp.id)
+        emp_roles_map[emp.id] = roles
+
+    employees_json = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "email": e.email,
+            "employee_code": e.employee_code,
+            "branch_id": e.branch_id,
+            "is_active": e.is_active,
+        }
+        for e in employees
+    ]
+    return templates.TemplateResponse(
+        "org/employees.html",
+        {
+            "request": request,
+            "current_org": org,
+            "active_page": "employees",
+            "branches": branches,
+            "branch_map": branch_map,
+            "employees": employees,
+            "employees_json": employees_json,
+            "available_roles": available_roles,
+            "emp_roles_map": emp_roles_map,
+        },
+    )
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────

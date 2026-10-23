@@ -21,7 +21,7 @@ from app.config import settings
 @pytest.mark.integration
 async def test_admin_seed_creates_admin(db_session: AsyncSession):
     """Seeding should create exactly one admin if none exists."""
-    await seed_default_admin()
+    await seed_default_admin(db_session)
     from sqlalchemy import select, func
     from models.admin import Admin
     count = (await db_session.execute(select(func.count()).select_from(Admin))).scalar()
@@ -37,7 +37,7 @@ async def test_full_token_lifecycle(client: AsyncClient, db_session: AsyncSessio
       user sees token in history
     """
     # ── 1. Seed admin ──────────────────────────────────────────────────────
-    await seed_default_admin()
+    await seed_default_admin(db_session)
 
     # ── 2. Register organization ───────────────────────────────────────────
     org_resp = await client.post("/org/register", json={
@@ -47,7 +47,7 @@ async def test_full_token_lifecycle(client: AsyncClient, db_session: AsyncSessio
         "address": "1 Test Road",
         "city": "Testville",
         "state": "Testland",
-        "email": "ith@integration.test",
+        "email": "ith@example.com",
         "mobile": "9000000000",
         "password": "OrgPass@123",
         "confirm_password": "OrgPass@123",
@@ -73,7 +73,7 @@ async def test_full_token_lifecycle(client: AsyncClient, db_session: AsyncSessio
 
     # ── 4. Org login ───────────────────────────────────────────────────────
     org_login = await client.post("/auth/org/login", json={
-        "email": "ith@integration.test",
+        "email": "ith@example.com",
         "password": "OrgPass@123",
     })
     assert org_login.status_code == 200, org_login.text
@@ -103,7 +103,7 @@ async def test_full_token_lifecycle(client: AsyncClient, db_session: AsyncSessio
     # ── 7. Register user ───────────────────────────────────────────────────
     user_reg = await client.post("/user/register", json={
         "name": "Integration User",
-        "email": "iuser@integration.test",
+        "email": "iuser@example.com",
         "mobile": "9000000001",
         "password": "UserPass@123",
         "confirm_password": "UserPass@123",
@@ -111,7 +111,7 @@ async def test_full_token_lifecycle(client: AsyncClient, db_session: AsyncSessio
     assert user_reg.status_code == 200, user_reg.text
 
     user_login = await client.post("/auth/user/login", json={
-        "email": "iuser@integration.test",
+        "email": "iuser@example.com",
         "password": "UserPass@123",
     })
     assert user_login.status_code == 200, user_login.text

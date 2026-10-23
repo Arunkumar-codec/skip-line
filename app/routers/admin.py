@@ -14,7 +14,7 @@ from app.dependencies import get_current_admin
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.common import APIResponse, MessageResponse, PaginatedResponse
 from app.schemas.organization import OrgRead
-from app.services import admin_service
+from app.services import admin_service, audit_service
 from models.admin import Admin
 
 router = APIRouter(dependencies=[Depends(get_current_admin)])
@@ -59,6 +59,17 @@ async def approve_org(
 ):
     try:
         org = await admin_service.approve_organization(db, org_id, admin)
+        await audit_service.log_audit_event(
+            db,
+            action="org.approved",
+            actor_type="admin",
+            actor_id=admin.id,
+            actor_email=admin.email,
+            organization_id=org_id,
+            target_type="organization",
+            target_id=str(org_id),
+            details={"org_name": org.name},
+        )
         return APIResponse(message="Organization approved", data=OrgRead.model_validate(org))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -72,6 +83,16 @@ async def reject_org(
 ):
     try:
         await admin_service.reject_organization(db, org_id, admin)
+        await audit_service.log_audit_event(
+            db,
+            action="org.rejected",
+            actor_type="admin",
+            actor_id=admin.id,
+            actor_email=admin.email,
+            organization_id=org_id,
+            target_type="organization",
+            target_id=str(org_id),
+        )
         return MessageResponse(message="Organization rejected")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -80,10 +101,21 @@ async def reject_org(
 @router.post("/organizations/{org_id}/suspend", response_model=MessageResponse)
 async def suspend_org(
     org_id: int,
+    admin: Admin = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     try:
         await admin_service.suspend_organization(db, org_id)
+        await audit_service.log_audit_event(
+            db,
+            action="org.suspended",
+            actor_type="admin",
+            actor_id=admin.id,
+            actor_email=admin.email,
+            organization_id=org_id,
+            target_type="organization",
+            target_id=str(org_id),
+        )
         return MessageResponse(message="Organization suspended")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -92,10 +124,21 @@ async def suspend_org(
 @router.delete("/organizations/{org_id}", response_model=MessageResponse)
 async def delete_org(
     org_id: int,
+    admin: Admin = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     try:
         await admin_service.delete_organization(db, org_id)
+        await audit_service.log_audit_event(
+            db,
+            action="org.deleted",
+            actor_type="admin",
+            actor_id=admin.id,
+            actor_email=admin.email,
+            organization_id=org_id,
+            target_type="organization",
+            target_id=str(org_id),
+        )
         return MessageResponse(message="Organization deleted")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

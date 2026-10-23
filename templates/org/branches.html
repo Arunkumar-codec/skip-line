@@ -1,0 +1,216 @@
+{% extends "shared/base.html" %}
+{% block title %}Branches{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Physical Branches</h1>
+    <p class="page-subtitle">Manage your organization's physical locations and clinics</p>
+  </div>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#branchModal" onclick="openAddBranch()">
+    <i class="bi bi-plus-lg me-1"></i>Add Branch
+  </button>
+</div>
+
+<div class="row g-3 fade-in-up" id="branchGrid">
+  {% for b in branches %}
+  <div class="col-md-6 col-xl-4">
+    <div class="content-card h-100">
+      <div class="p-4 d-flex flex-column h-100">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+          <div class="stat-icon blue"><i class="bi bi-geo-alt-fill"></i></div>
+          <span class="badge-status badge-{{ 'active' if b.is_active else 'inactive' }}">
+            {{ 'Active' if b.is_active else 'Inactive' }}
+          </span>
+        </div>
+        <h3 class="fw-700 mb-1 fs-5">{{ b.name }}</h3>
+        <p class="text-muted text-sm mb-2"><span class="badge bg-light text-dark border">Code: {{ b.branch_code }}</span></p>
+        <p class="text-sm text-secondary mb-3">
+          <i class="bi bi-building me-1"></i>{{ b.address }}<br>
+          <i class="bi bi-pin-map me-1"></i>{{ b.city }}, {{ b.state }} - {{ b.pincode }}
+        </p>
+        <div class="d-flex gap-2 mt-auto">
+          <button class="btn btn-sm btn-outline-primary flex-fill"
+                  onclick='openEditBranch({{ branches_json[loop.index0] | tojson }})'>
+            <i class="bi bi-pencil me-1"></i>Edit
+          </button>
+          <button class="btn btn-sm btn-outline-danger"
+                  onclick="deleteBranch({{ b.id }}, '{{ b.name }}')">
+            <i class="bi bi-trash3"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12">
+    <div class="content-card text-center py-5">
+      <i class="bi bi-geo text-muted" style="font-size:3rem"></i>
+      <h5 class="fw-700 mt-3 mb-1">No Branches Found</h5>
+      <p class="text-muted text-sm mb-3">Add your first branch or clinic location to organize staff and counters.</p>
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#branchModal" onclick="openAddBranch()">
+        <i class="bi bi-plus-lg me-1"></i>Create First Branch
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Add/Edit Branch Modal -->
+<div class="modal fade" id="branchModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="branchModalTitle">Add Branch</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="branchForm" onsubmit="saveBranch(event)">
+        <div class="modal-body">
+          <input type="hidden" id="branchId"/>
+          <div class="mb-3">
+            <label class="form-label">Branch Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="branchName" required placeholder="e.g. Main Clinic"/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Branch Code <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="branchCode" required placeholder="e.g. MAIN-01"/>
+            <div class="form-text">Unique code within your organization.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Address <span class="text-danger">*</span></label>
+            <textarea class="form-control" id="branchAddress" rows="2" required placeholder="Street address"></textarea>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label">City <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="branchCity" required/>
+            </div>
+            <div class="col-6">
+              <label class="form-label">State <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="branchState" required/>
+            </div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label">Pincode <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="branchPincode" required/>
+            </div>
+            <div class="col-6 d-flex align-items-center mt-4">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="branchActive" checked/>
+                <label class="form-check-label" for="branchActive">Active</label>
+              </div>
+            </div>
+          </div>
+          <div id="branchError" class="alert alert-danger d-none py-2 text-sm"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="saveBranchBtn">Save Branch</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let editingId = null;
+
+function openAddBranch() {
+  editingId = null;
+  document.getElementById('branchModalTitle').textContent = 'Add Branch';
+  document.getElementById('branchForm').reset();
+  document.getElementById('branchId').value = '';
+  document.getElementById('branchActive').checked = true;
+  document.getElementById('branchError').classList.add('d-none');
+}
+
+function openEditBranch(b) {
+  editingId = b.id;
+  document.getElementById('branchModalTitle').textContent = 'Edit Branch';
+  document.getElementById('branchId').value = b.id;
+  document.getElementById('branchName').value = b.name;
+  document.getElementById('branchCode').value = b.branch_code;
+  document.getElementById('branchAddress').value = b.address;
+  document.getElementById('branchCity').value = b.city;
+  document.getElementById('branchState').value = b.state;
+  document.getElementById('branchPincode').value = b.pincode;
+  document.getElementById('branchActive').checked = b.is_active;
+  document.getElementById('branchError').classList.add('d-none');
+  new bootstrap.Modal(document.getElementById('branchModal')).show();
+}
+
+async function saveBranch(e) {
+  e.preventDefault();
+  const btn = document.getElementById('saveBranchBtn');
+  const err = document.getElementById('branchError');
+  btn.disabled = true;
+  err.classList.add('d-none');
+
+  const payload = {
+    name: document.getElementById('branchName').value.trim(),
+    branch_code: document.getElementById('branchCode').value.trim(),
+    address: document.getElementById('branchAddress').value.trim(),
+    city: document.getElementById('branchCity').value.trim(),
+    state: document.getElementById('branchState').value.trim(),
+    pincode: document.getElementById('branchPincode').value.trim(),
+    is_active: document.getElementById('branchActive').checked,
+  };
+
+  try {
+    const url = editingId ? `/org/branches/${editingId}` : '/org/branches';
+    const method = editingId ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method: method,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to save branch');
+    location.reload();
+  } catch (errVal) {
+    err.textContent = errVal.message;
+    err.classList.remove('d-none');
+    btn.disabled = false;
+  }
+}
+
+async function deleteBranch(id, name) {
+  if (!confirm(`Are you sure you want to delete branch "${name}"?`)) return;
+  try {
+    const res = await fetch(`/org/branches/${id}`, {method: 'DELETE'});
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.detail || 'Failed to delete branch');
+      return;
+    }
+    location.reload();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+</script>
+{% endblock %}
