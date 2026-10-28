@@ -106,6 +106,12 @@ class Token(Base, TimestampMixin):
     queue_logs: Mapped[list["QueueLog"]] = relationship(
         "QueueLog", back_populates="token"
     )
+    form_snapshot: Mapped["TokenFormSnapshot | None"] = relationship(
+        "TokenFormSnapshot", back_populates="token", uselist=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    token_services: Mapped[list["TokenServiceItem"]] = relationship(
+        "TokenServiceItem", back_populates="token", cascade="all, delete-orphan", lazy="selectin"
+    )
 
     def __repr__(self) -> str:
         return f"<Token id={self.id} number={self.token_number!r} status={self.status}>"

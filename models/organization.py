@@ -92,6 +92,9 @@ class Organization(Base, TimestampMixin):
     settings: Mapped[list["Setting"]] = relationship(
         "Setting", back_populates="organization", cascade="all, delete-orphan"
     )
+    custom_forms: Mapped[list["CustomForm"]] = relationship(
+        "CustomForm", back_populates="organization", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Organization id={self.id} name={self.name!r} status={self.status}>"

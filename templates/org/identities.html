@@ -1,0 +1,210 @@
+{% extends "shared/base.html" %}
+{% block title %}KYC Verification Desk{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Identity Verification Review Desk</h1>
+    <p class="page-subtitle">Review customer KYC documents, approve identities, and satisfy service compliance requirements</p>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary active" onclick="filterIdentities('all', this)">All Submissions</button>
+      <button class="btn btn-sm btn-outline-warning" onclick="filterIdentities('pending', this)">Pending Review</button>
+      <button class="btn btn-sm btn-outline-success" onclick="filterIdentities('approved', this)">Approved</button>
+      <button class="btn btn-sm btn-outline-danger" onclick="filterIdentities('rejected', this)">Rejected</button>
+    </div>
+    <span class="text-xs text-muted">Total: {{ identities|length }} Document(s)</span>
+  </div>
+
+  <div class="table-responsive">
+    <table class="sl-table">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>ID Type</th>
+          <th>Masked Number</th>
+          <th>Submitted Date</th>
+          <th>Document</th>
+          <th>Status</th>
+          <th>Reviewed At</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="identitiesTableBody">
+        {% for id_rec in identities %}
+        <tr class="id-row id-status-{{ id_rec.status }}">
+          <td>
+            <div class="fw-700 text-dark">{{ id_rec.user.name if id_rec.user else 'User #' ~ id_rec.user_id }}</div>
+            <div class="text-xs text-muted">{{ id_rec.user.email if id_rec.user else '' }}</div>
+          </td>
+          <td>
+            <span class="badge bg-secondary-subtle text-secondary border text-xs text-uppercase font-monospace">
+              {{ id_rec.id_type }}
+            </span>
+          </td>
+          <td>
+            <span class="font-monospace fw-600 fs-6 text-dark">{{ id_rec.masked_id_number }}</span>
+          </td>
+          <td class="text-sm text-muted">
+            {{ id_rec.created_at.strftime('%Y-%m-%d %H:%M') if id_rec.created_at else '—' }}
+          </td>
+          <td>
+            {% if id_rec.document_path %}
+              <a href="/org/identities/{{ id_rec.id }}/document" target="_blank" class="btn btn-xs btn-outline-primary">
+                <i class="bi bi-file-earmark-text me-1"></i>View Document
+              </a>
+            {% else %}
+              <span class="text-xs text-muted">Number only</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if id_rec.status == 'approved' %}
+              <span class="badge bg-success-subtle text-success border text-xs"><i class="bi bi-check-circle me-1"></i>Approved</span>
+            {% elif id_rec.status == 'rejected' %}
+              <span class="badge bg-danger-subtle text-danger border text-xs" title="{{ id_rec.rejection_reason or '' }}"><i class="bi bi-x-circle me-1"></i>Rejected</span>
+            {% else %}
+              <span class="badge bg-warning-subtle text-warning border text-xs"><i class="bi bi-hourglass-split me-1"></i>Pending</span>
+            {% endif %}
+          </td>
+          <td class="text-xs text-muted">
+            {{ id_rec.reviewed_at.strftime('%Y-%m-%d %H:%M') if id_rec.reviewed_at else '—' }}
+          </td>
+          <td>
+            {% if id_rec.status == 'pending' %}
+              <button class="btn btn-xs btn-primary" onclick="openReviewModal({{ id_rec.id }}, '{{ id_rec.user.name if id_rec.user else 'Customer' }}', '{{ id_rec.id_type }}', '{{ id_rec.masked_id_number }}')">
+                <i class="bi bi-check2-circle me-1"></i>Review
+              </button>
+            {% else %}
+              <button class="btn btn-xs btn-outline-secondary" onclick="openReviewModal({{ id_rec.id }}, '{{ id_rec.user.name if id_rec.user else 'Customer' }}', '{{ id_rec.id_type }}', '{{ id_rec.masked_id_number }}')">
+                Re-evaluate
+              </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-center text-muted py-5">
+            <i class="bi bi-person-badge fs-2 d-block mb-2"></i>No customer identity verification requests submitted yet
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Review Modal -->
+<div class="modal fade" id="reviewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-700">Review Customer Identity</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="reviewIdentityId"/>
+        <div class="p-3 bg-light-subtle rounded border mb-3">
+          <div class="row g-2 text-sm">
+            <div class="col-6"><span class="text-muted text-xs">Customer</span><br><strong id="mCustName"></strong></div>
+            <div class="col-6"><span class="text-muted text-xs">ID Type</span><br><strong id="mIdType" class="text-uppercase"></strong></div>
+            <div class="col-12"><span class="text-muted text-xs">Masked Number</span><br><span id="mMaskedNumber" class="font-monospace fw-700 fs-6 text-primary"></span></div>
+          </div>
+        </div>
+
+        <div class="mb-3" id="rejectionSection">
+          <label class="form-label text-sm fw-600">Rejection Reason (required if rejecting)</label>
+          <textarea class="form-control" id="fRejectReason" rows="2" placeholder="e.g. Document image is blurred or expired"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0 d-flex justify-content-between">
+        <button class="btn btn-danger" onclick="submitReview('reject')">
+          <i class="bi bi-x-circle me-1"></i>Reject Document
+        </button>
+        <button class="btn btn-success" onclick="submitReview('approve')">
+          <i class="bi bi-check-circle me-1"></i>Approve Document
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function filterIdentities(status, btn) {
+  document.querySelectorAll('.border-bottom .btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const rows = document.querySelectorAll('.id-row');
+  rows.forEach(r => {
+    if (status === 'all') {
+      r.classList.remove('d-none');
+    } else {
+      if (r.classList.contains(`id-status-${status}`)) {
+        r.classList.remove('d-none');
+      } else {
+        r.classList.add('d-none');
+      }
+    }
+  });
+}
+
+function openReviewModal(id, name, type, masked) {
+  document.getElementById('reviewIdentityId').value = id;
+  document.getElementById('mCustName').textContent = name;
+  document.getElementById('mIdType').textContent = type;
+  document.getElementById('mMaskedNumber').textContent = masked;
+  document.getElementById('fRejectReason').value = '';
+  new bootstrap.Modal(document.getElementById('reviewModal')).show();
+}
+
+async function submitReview(action) {
+  const id = document.getElementById('reviewIdentityId').value;
+  const reason = document.getElementById('fRejectReason').value.trim();
+
+  if (action === 'reject' && !reason) {
+    showToast('Please provide a reason for rejection', 'warning');
+    return;
+  }
+
+  const body = {
+    action: action,
+    rejection_reason: action === 'reject' ? reason : null,
+  };
+
+  try {
+    await apiRequest(`/org/identities/${id}/review`, 'POST', body);
+    showToast(`Identity submission ${action}ed successfully`);
+    bootstrap.Modal.getInstance(document.getElementById('reviewModal'))?.hide();
+    setTimeout(() => location.reload(), 500);
+  } catch(e) {
+    showToast(e.message, 'danger');
+  }
+}
+</script>
+{% endblock %}

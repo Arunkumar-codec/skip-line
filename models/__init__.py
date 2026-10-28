@@ -27,6 +27,18 @@ from models.role_permission import RolePermission           # noqa: F401
 from models.employee_role_assignment import EmployeeRoleAssignment  # noqa: F401
 from models.session import Session                         # noqa: F401
 from models.audit_log import AuditLog                      # noqa: F401
+from models.counter_service import CounterService          # noqa: F401
+from models.sub_service import SubService                  # noqa: F401
+from models.token_service_item import TokenServiceItem     # noqa: F401
+from models.custom_form import (                           # noqa: F401
+    CustomForm,
+    FormField,
+    FormFieldOption,
+    FormFieldCondition,
+    TokenFormSnapshot,
+    TokenFormAnswer,
+)
+from models.user_identity import UserIdentity              # noqa: F401
 
 __all__ = [
     "Admin",
@@ -49,4 +61,14 @@ __all__ = [
     "EmployeeRoleAssignment",
     "Session",
     "AuditLog",
+    "CounterService",
+    "SubService",
+    "TokenServiceItem",
+    "CustomForm",
+    "FormField",
+    "FormFieldOption",
+    "FormFieldCondition",
+    "TokenFormSnapshot",
+    "TokenFormAnswer",
+    "UserIdentity",
 ]

@@ -36,6 +36,15 @@ DEFAULT_PERMISSIONS = [
     # Services & Counters
     {"code": "services:manage", "name": "Manage Services", "module": "services", "description": "Configure services and forms"},
     {"code": "counters:manage", "name": "Manage Counters", "module": "counters", "description": "Configure physical counters and displays"},
+    # Catalogue & Sub-services
+    {"code": "catalogue:read", "name": "View Catalogue", "module": "catalogue", "description": "View services, sub-services and pricing"},
+    {"code": "catalogue:manage", "name": "Manage Catalogue", "module": "catalogue", "description": "Create, update, and configure services, sub-services, and pricing"},
+    # Forms
+    {"code": "forms:read", "name": "View Custom Forms", "module": "forms", "description": "View dynamic custom forms and submissions"},
+    {"code": "forms:manage", "name": "Manage Custom Forms", "module": "forms", "description": "Create, update, and publish custom forms"},
+    # Customer Identity Verification (KYC)
+    {"code": "identity:read", "name": "View Identity Documents", "module": "identity", "description": "View customer KYC documents and verification status"},
+    {"code": "identity:review", "name": "Review Identity Documents", "module": "identity", "description": "Approve or reject customer identity submissions"},
     # Reports & Audit
     {"code": "reports:read", "name": "View Reports", "module": "reports", "description": "View analytics and daily performance reports"},
     {"code": "audit:read", "name": "View Audit Logs", "module": "audit", "description": "Inspect tenant security and administrative logs"},
@@ -58,7 +67,9 @@ DEFAULT_ROLES = [
         "permissions": [
             "branches:read", "branches:write", "employees:read", "employees:write",
             "roles:read", "roles:assign", "queue:read", "queue:call", "queue:operate",
-            "queue:transfer", "services:manage", "counters:manage", "reports:read",
+            "queue:transfer", "services:manage", "counters:manage",
+            "catalogue:read", "catalogue:manage", "forms:read", "forms:manage",
+            "identity:read", "identity:review", "reports:read",
         ],
     },
     {
@@ -67,6 +78,7 @@ DEFAULT_ROLES = [
         "description": "Calls and processes customer tokens at assigned counters",
         "permissions": [
             "queue:read", "queue:call", "queue:operate", "queue:transfer",
+            "catalogue:read", "forms:read",
         ],
     },
     {
@@ -75,6 +87,7 @@ DEFAULT_ROLES = [
         "description": "Assists walk-in visitors and issues queue tokens",
         "permissions": [
             "queue:read", "queue:operate", "services:manage",
+            "catalogue:read", "forms:read", "identity:read", "identity:review",
         ],
     },
     {
@@ -83,6 +96,7 @@ DEFAULT_ROLES = [
         "description": "Read-only access to analytics, reports, and audit logs",
         "permissions": [
             "reports:read", "audit:read", "queue:read", "branches:read", "employees:read",
+            "catalogue:read", "forms:read", "identity:read",
         ],
     },
 ]

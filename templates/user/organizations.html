@@ -135,14 +135,41 @@
           <p class="text-muted small mb-3">Select a service and counter</p>
           <div class="mb-3">
             <label class="form-label">Service</label>
-            <select class="form-select" id="bookServiceId">
-              <option value="">Loading services…</option>
+            <select class="form-select" id="bookServiceId" onchange="onServiceSelected()">
+              <option value="">— Select Service —</option>
             </select>
           </div>
+
+          <!-- KYC Warning Badge (Dynamic) -->
+          <div id="serviceKycAlert" class="alert alert-warning text-xs p-2 d-none mb-3">
+            <i class="bi bi-shield-exclamation me-1"></i><strong>Identity Verification Required:</strong> This service requires an approved KYC document on file.
+          </div>
+
+          <!-- Sub-Services Selection -->
+          <div id="subServicesSection" class="mb-3 d-none">
+            <label class="form-label text-xs text-uppercase fw-600 text-muted">Available Sub-Services / Options</label>
+            <div id="subServicesList" class="border rounded p-2 bg-light-subtle d-flex flex-column gap-2"></div>
+          </div>
+
+          <!-- Pricing & Duration Rollup -->
+          <div id="serviceRollupBox" class="p-2 mb-3 bg-light rounded text-xs d-none">
+            <div class="d-flex justify-content-between">
+              <span>Estimated Wait: <strong id="rollupTime">0 min</strong></span>
+              <span>Total Price: <strong id="rollupPrice" class="text-primary">₹0.00</strong></span>
+            </div>
+          </div>
+
+          <!-- Dynamic Custom Form Fields Container -->
+          <div id="customFormContainer" class="mb-3 d-none border rounded p-3 bg-light-subtle">
+            <h6 class="fw-700 text-sm mb-1" id="customFormTitle">Pre-Booking Questionnaire</h6>
+            <p class="text-xs text-muted mb-3" id="customFormDesc"></p>
+            <div id="customFormFields" class="d-flex flex-column gap-2"></div>
+          </div>
+
           <div class="mb-3">
-            <label class="form-label">Counter</label>
+            <label class="form-label">Counter (Optional / Auto-Routed)</label>
             <select class="form-select" id="bookCounterId">
-              <option value="">Loading counters…</option>
+              <option value="">— Auto-Route to Best Available Counter —</option>
             </select>
           </div>
         </div>
@@ -176,6 +203,8 @@
 {% block extra_js %}
 <script>
 let currentOrgId = null;
+let currentCatalogue = [];
+let activeCustomForm = null;
 
 async function openBookModal(orgId, orgName) {
   currentOrgId = orgId;
@@ -184,33 +213,165 @@ async function openBookModal(orgId, orgName) {
   document.getElementById('bookStep1').classList.remove('d-none');
   document.getElementById('bookStep2').classList.add('d-none');
   document.getElementById('bookFooter').classList.remove('d-none');
+  document.getElementById('subServicesSection').classList.add('d-none');
+  document.getElementById('serviceRollupBox').classList.add('d-none');
+  document.getElementById('serviceKycAlert').classList.add('d-none');
+  document.getElementById('customFormContainer').classList.add('d-none');
 
-  // Load services and counters in parallel
-  const [svcData, ctrData] = await Promise.all([
-    apiRequest(`/public/organizations/${orgId}/services`),
+  // Load services with catalogue and counters in parallel
+  const [catData, ctrData] = await Promise.all([
+    apiRequest(`/user/api/catalogue/${orgId}`),
     apiRequest(`/public/organizations/${orgId}/counters`),
   ]);
 
+  currentCatalogue = catData.data || [];
+
   const svcSel = document.getElementById('bookServiceId');
-  svcSel.innerHTML = '<option value="">— No preference —</option>' +
-    (svcData.data || []).map(s =>
-      `<option value="${s.id}">${s.name}${s.price > 0 ? ' (₹'+s.price+')' : ''}</option>`
+  svcSel.innerHTML = '<option value="">— Select Service —</option>' +
+    currentCatalogue.map(s =>
+      `<option value="${s.id}">${s.name}${s.price > 0 ? ' (₹'+s.price+')' : ' (Free)'}${s.requires_identity_verification ? ' [KYC Required]' : ''}</option>`
     ).join('');
 
   const ctrSel = document.getElementById('bookCounterId');
-  ctrSel.innerHTML = (ctrData.data || []).map((c, i) =>
-    `<option value="${c.id}" ${i===0?'selected':''}>${c.counter_name} (${c.token_prefix})</option>`
-  ).join('');
-  if (!ctrData.data?.length) ctrSel.innerHTML = '<option value="">No active counters</option>';
+  ctrSel.innerHTML = '<option value="">— Auto-Route to Best Counter —</option>' +
+    (ctrData.data || []).map(c =>
+      `<option value="${c.id}">${c.counter_name} (${c.token_prefix})</option>`
+    ).join('');
 
   new bootstrap.Modal(document.getElementById('bookModal')).show();
+}
+
+async function onServiceSelected() {
+  const serviceIdVal = document.getElementById('bookServiceId').value;
+  const subSection = document.getElementById('subServicesSection');
+  const subList = document.getElementById('subServicesList');
+  const kycAlert = document.getElementById('serviceKycAlert');
+  const rollupBox = document.getElementById('serviceRollupBox');
+  const formContainer = document.getElementById('customFormContainer');
+
+  if (!serviceIdVal) {
+    subSection.classList.add('d-none');
+    rollupBox.classList.add('d-none');
+    kycAlert.classList.add('d-none');
+    formContainer.classList.add('d-none');
+    return;
+  }
+
+  const sId = parseInt(serviceIdVal);
+  const service = currentCatalogue.find(s => s.id === sId);
+  if (!service) return;
+
+  // KYC alert
+  if (service.requires_identity_verification) {
+    kycAlert.classList.remove('d-none');
+  } else {
+    kycAlert.classList.add('d-none');
+  }
+
+  // Sub-services
+  if (service.sub_services && service.sub_services.length > 0) {
+    subList.innerHTML = service.sub_services.map(sub => `
+      <div class="form-check">
+        <input class="form-check-input sub-service-check" type="checkbox" value="${sub.id}"
+               data-price="${sub.additional_price}" data-mins="${sub.additional_minutes}"
+               id="sub_${sub.id}" onchange="recalculateRollup()">
+        <label class="form-check-label text-xs fw-500" for="sub_${sub.id}">
+          ${sub.name} (+₹${sub.additional_price} · +${sub.additional_minutes} min)
+        </label>
+      </div>
+    `).join('');
+    subSection.classList.remove('d-none');
+  } else {
+    subSection.classList.add('d-none');
+    subList.innerHTML = '';
+  }
+
+  recalculateRollup();
+
+  // Load custom form for service if any
+  try {
+    const formData = await apiRequest(`/user/api/forms/service/${sId}`);
+    activeCustomForm = formData.data;
+    if (activeCustomForm && activeCustomForm.fields && activeCustomForm.fields.length > 0) {
+      document.getElementById('customFormTitle').textContent = activeCustomForm.title;
+      document.getElementById('customFormDesc').textContent = activeCustomForm.description || '';
+      renderCustomFormFields(activeCustomForm.fields);
+      formContainer.classList.remove('d-none');
+    } else {
+      formContainer.classList.add('d-none');
+    }
+  } catch(e) {
+    formContainer.classList.add('d-none');
+  }
+}
+
+function renderCustomFormFields(fields) {
+  const container = document.getElementById('customFormFields');
+  container.innerHTML = fields.map(f => {
+    let inputHtml = '';
+    if (f.field_type === 'textarea') {
+      inputHtml = `<textarea class="form-control form-control-sm form-ans-field" data-key="${f.field_key}" placeholder="${f.placeholder || ''}" ${f.is_required ? 'required' : ''}></textarea>`;
+    } else if (f.field_type === 'select') {
+      const options = (f.options || []).map(o => `<option value="${o.option_value}">${o.option_label}</option>`).join('');
+      inputHtml = `<select class="form-select form-select-sm form-ans-field" data-key="${f.field_key}" ${f.is_required ? 'required' : ''}><option value="">— Choose —</option>${options}</select>`;
+    } else {
+      inputHtml = `<input type="${f.field_type === 'number' ? 'number' : 'text'}" class="form-control form-control-sm form-ans-field" data-key="${f.field_key}" placeholder="${f.placeholder || ''}" ${f.is_required ? 'required' : ''}>`;
+    }
+    return `
+      <div>
+        <label class="form-label text-xs mb-1 fw-600">${f.label} ${f.is_required ? '<span class="text-danger">*</span>' : ''}</label>
+        ${inputHtml}
+      </div>
+    `;
+  }).join('');
+}
+
+function recalculateRollup() {
+  const serviceIdVal = document.getElementById('bookServiceId').value;
+  if (!serviceIdVal) return;
+
+  const service = currentCatalogue.find(s => s.id === parseInt(serviceIdVal));
+  if (!service) return;
+
+  let totalPrice = parseFloat(service.price) || 0;
+  let totalMins = parseInt(service.estimated_minutes) || 10;
+
+  document.querySelectorAll('.sub-service-check:checked').forEach(cb => {
+    totalPrice += parseFloat(cb.dataset.price) || 0;
+    totalMins += parseInt(cb.dataset.mins) || 0;
+  });
+
+  document.getElementById('rollupPrice').textContent = `₹${totalPrice.toFixed(2)}`;
+  document.getElementById('rollupTime').textContent = `${totalMins} min`;
+  document.getElementById('serviceRollupBox').classList.remove('d-none');
 }
 
 async function confirmBook() {
   const orgId     = parseInt(document.getElementById('bookOrgId').value);
   const serviceId = document.getElementById('bookServiceId').value || null;
-  const counterId = parseInt(document.getElementById('bookCounterId').value);
-  if (!counterId) { showToast('Please select a counter', 'warning'); return; }
+  const counterId = document.getElementById('bookCounterId').value || null;
+
+  if (!serviceId && !counterId) {
+    showToast('Please select either a service or a counter to proceed.', 'warning');
+    return;
+  }
+
+  // Collect sub-services
+  const subServiceIds = Array.from(document.querySelectorAll('.sub-service-check:checked')).map(cb => parseInt(cb.value));
+
+  // Collect form answers
+  const formAnswers = {};
+  const answerInputs = document.querySelectorAll('.form-ans-field');
+  for (let input of answerInputs) {
+    const key = input.dataset.key;
+    const val = input.value.trim();
+    if (input.hasAttribute('required') && !val) {
+      showToast('Please answer all required form questions', 'warning');
+      input.focus();
+      return;
+    }
+    formAnswers[key] = val;
+  }
 
   const btn  = document.getElementById('confirmBookBtn');
   const spin = document.getElementById('bookSpin');
@@ -219,8 +380,10 @@ async function confirmBook() {
   try {
     const data = await apiRequest('/user/tokens/book', 'POST', {
       organization_id: orgId,
-      counter_id: counterId,
+      counter_id: counterId ? parseInt(counterId) : null,
       service_id: serviceId ? parseInt(serviceId) : null,
+      sub_service_ids: subServiceIds,
+      form_answers: formAnswers,
     });
 
     const t = data.data;
@@ -233,7 +396,7 @@ async function confirmBook() {
     document.getElementById('bookStep1').classList.add('d-none');
     document.getElementById('bookStep2').classList.remove('d-none');
     document.getElementById('bookFooter').classList.add('d-none');
-    showToast(`Token ${t.token_number} booked!`);
+    showToast(`Token ${t.token_number} booked successfully!`);
   } catch(e) {
     showToast(e.message, 'danger');
   } finally {

@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     qr_code_dir: str = "qr_codes"
     receipt_dir: str = "receipts"
     static_dir: str = "static"
+    upload_dir: str = "uploads"
+    identity_dir: str = "uploads/identities"
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: List[str] = ["http://localhost:8000"]

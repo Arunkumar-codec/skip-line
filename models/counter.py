@@ -28,6 +28,9 @@ class Counter(Base, TimestampMixin):
     organization_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    branch_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     service_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("services.id", ondelete="SET NULL"), nullable=True
     )
@@ -45,8 +48,14 @@ class Counter(Base, TimestampMixin):
     organization: Mapped["Organization"] = relationship(
         "Organization", back_populates="counters"
     )
+    branch: Mapped["Branch | None"] = relationship(
+        "Branch"
+    )
     service: Mapped["Service | None"] = relationship(
         "Service", back_populates="counters"
+    )
+    counter_services: Mapped[list["CounterService"]] = relationship(
+        "CounterService", back_populates="counter", cascade="all, delete-orphan"
     )
     tokens: Mapped[list["Token"]] = relationship(
         "Token", back_populates="counter"

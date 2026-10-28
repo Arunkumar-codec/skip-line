@@ -1,7 +1,6 @@
 {% extends "shared/base.html" %}
-{% block title %}Services{% endblock %}
+{% block title %}Service Catalogue{% endblock %}
 {% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
-
 
 {% block topnav_user %}
 <div class="dropdown">
@@ -26,11 +25,11 @@
 {% block content %}
 <div class="page-header fade-in-up">
   <div>
-    <h1 class="page-title">Service Management</h1>
-    <p class="page-subtitle">Define the services your organization offers</p>
+    <h1 class="page-title">Service Catalogue & Sub-services</h1>
+    <p class="page-subtitle">Configure hierarchical services, pricing rollups, and KYC requirements</p>
   </div>
-  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#serviceModal" onclick="openAdd()">
-    <i class="bi bi-plus-lg me-1"></i>Add Service
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#serviceModal" onclick="openAddService()">
+    <i class="bi bi-plus-lg me-1"></i>Add Parent Service
   </button>
 </div>
 
@@ -39,10 +38,12 @@
     <table class="sl-table">
       <thead>
         <tr>
-          <th>Service Name</th>
-          <th>Description</th>
-          <th>Price</th>
-          <th>Est. Time</th>
+          <th>Service / Code</th>
+          <th>Branch</th>
+          <th>Base Price</th>
+          <th>Base Duration</th>
+          <th>KYC Verification</th>
+          <th>Sub-Services</th>
           <th>Status</th>
           <th>Actions</th>
         </tr>
@@ -50,12 +51,42 @@
       <tbody>
         {% for s in services %}
         <tr>
-          <td class="fw-600">{{ s.name }}</td>
-          <td class="text-sm text-muted">{{ s.description or '—' }}</td>
+          <td>
+            <div class="fw-700 text-dark">{{ s.name }}</div>
+            {% if s.service_code %}
+              <span class="badge bg-primary-subtle text-primary border text-xs font-monospace">{{ s.service_code }}</span>
+            {% endif %}
+            {% if s.description %}
+              <div class="text-xs text-muted mt-1 text-truncate" style="max-width:260px">{{ s.description }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.branch %}
+              <span class="badge bg-light text-secondary border text-xs"><i class="bi bi-geo-alt me-1"></i>{{ s.branch.name }}</span>
+            {% else %}
+              <span class="text-muted text-xs">All Branches</span>
+            {% endif %}
+          </td>
           <td class="fw-600">
             {% if s.price > 0 %}₹{{ "%.2f"|format(s.price) }}{% else %}<span class="text-success">Free</span>{% endif %}
           </td>
           <td class="text-sm">{{ s.estimated_minutes }} min</td>
+          <td>
+            {% if s.requires_identity_verification %}
+              <span class="badge bg-warning-subtle text-warning border text-xs">
+                <i class="bi bi-shield-check me-1"></i>Required (KYC)
+              </span>
+            {% else %}
+              <span class="text-muted text-xs">Standard</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.sub_services %}
+              <span class="badge bg-info-subtle text-info border text-xs">{{ s.sub_services|length }} Sub-service(s)</span>
+            {% else %}
+              <span class="text-muted text-xs">—</span>
+            {% endif %}
+          </td>
           <td>
             <span class="badge-status badge-{{ 'active' if s.is_active else 'inactive' }}">
               {{ 'Active' if s.is_active else 'Inactive' }}
@@ -63,19 +94,77 @@
           </td>
           <td>
             <div class="d-flex gap-1">
-              <button class="btn btn-xs btn-outline-primary" onclick='openEdit({{ services_json[loop.index0] | tojson }})'>
+              <button class="btn btn-xs btn-outline-success" title="Add Sub-service"
+                      onclick="openAddSubService({{ s.id }}, '{{ s.name }}')">
+                <i class="bi bi-plus-circle"></i>
+              </button>
+              <button class="btn btn-xs btn-outline-primary" title="Edit Service"
+                      onclick='openEditService({{ services_json[loop.index0] | tojson }})'>
                 <i class="bi bi-pencil"></i>
               </button>
-              <button class="btn btn-xs btn-outline-danger" onclick="deleteService({{ s.id }}, '{{ s.name }}')">
+              <button class="btn btn-xs btn-outline-danger" title="Delete Service"
+                      onclick="deleteService({{ s.id }}, '{{ s.name }}')">
                 <i class="bi bi-trash3"></i>
               </button>
             </div>
           </td>
         </tr>
+
+        <!-- Nested Sub-services Row -->
+        {% if s.sub_services %}
+        <tr class="bg-light-subtle">
+          <td colspan="8" class="p-3 ps-5">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <i class="bi bi-arrow-return-right text-muted"></i>
+              <strong class="text-xs text-uppercase text-muted">Sub-services under {{ s.name }}</strong>
+            </div>
+            <div class="table-responsive bg-white rounded border">
+              <table class="table table-sm mb-0">
+                <thead class="table-light text-xs">
+                  <tr>
+                    <th>Code</th>
+                    <th>Sub-service Name</th>
+                    <th>Additional Fee</th>
+                    <th>Additional Time</th>
+                    <th>Calculated Rollup</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody class="text-sm">
+                  {% for sub in s.sub_services %}
+                  <tr>
+                    <td class="font-monospace text-xs text-primary fw-600">{{ sub.code }}</td>
+                    <td class="fw-600">{{ sub.name }}</td>
+                    <td>+₹{{ "%.2f"|format(sub.additional_price) }}</td>
+                    <td>+{{ sub.additional_minutes }} min</td>
+                    <td class="text-xs text-muted">
+                      Total: ₹{{ "%.2f"|format(s.price + sub.additional_price) }} • {{ s.estimated_minutes + sub.additional_minutes }} min
+                    </td>
+                    <td>
+                      <span class="badge bg-{{ 'success' if sub.is_active else 'secondary' }}-subtle text-{{ 'success' if sub.is_active else 'secondary' }} text-xs">
+                        {{ 'Active' if sub.is_active else 'Inactive' }}
+                      </span>
+                    </td>
+                    <td>
+                      <button class="btn btn-link btn-sm text-danger p-0" title="Delete sub-service"
+                              onclick="deleteSubService({{ sub.id }}, '{{ sub.name }}')">
+                        <i class="bi bi-trash3 text-xs"></i>
+                      </button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+
         {% else %}
         <tr>
-          <td colspan="6" class="text-center text-muted py-5">
-            <i class="bi bi-card-checklist fs-2 d-block mb-2"></i>No services yet
+          <td colspan="8" class="text-center text-muted py-5">
+            <i class="bi bi-card-checklist fs-2 d-block mb-2"></i>No services configured yet
           </td>
         </tr>
         {% endfor %}
@@ -84,7 +173,7 @@
   </div>
 </div>
 
-<!-- Service Modal -->
+<!-- Parent Service Modal -->
 <div class="modal fade" id="serviceModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -95,35 +184,98 @@
       <div class="modal-body">
         <input type="hidden" id="editServiceId"/>
         <div class="row g-3">
-          <div class="col-12">
+          <div class="col-8">
             <label class="form-label">Service Name <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="fSvcName" placeholder="e.g. General Consultation"/>
+            <input type="text" class="form-control" id="fSvcName" placeholder="e.g. General Consultation" required/>
+          </div>
+          <div class="col-4">
+            <label class="form-label">Service Code</label>
+            <input type="text" class="form-control" id="fSvcCode" placeholder="GEN-01"/>
           </div>
           <div class="col-12">
-            <label class="form-label">Description</label>
-            <textarea class="form-control" id="fSvcDesc" rows="2" placeholder="Optional description…"></textarea>
+            <label class="form-label">Branch Scoping</label>
+            <select class="form-select" id="fSvcBranchId">
+              <option value="">— All Branches / Global —</option>
+              {% for b in branches %}
+              <option value="{{ b.id }}">{{ b.name }} ({{ b.branch_code }})</option>
+              {% endfor %}
+            </select>
           </div>
           <div class="col-6">
-            <label class="form-label">Price (₹)</label>
-            <input type="number" class="form-control" id="fSvcPrice" min="0" step="0.01" placeholder="0 = Free"/>
+            <label class="form-label">Base Fee (INR)</label>
+            <input type="number" class="form-control" id="fSvcPrice" min="0" step="0.5" placeholder="0.00"/>
           </div>
           <div class="col-6">
-            <label class="form-label">Est. Time (minutes)</label>
-            <input type="number" class="form-control" id="fSvcTime" min="1" placeholder="10"/>
+            <label class="form-label">Est. Duration (Minutes)</label>
+            <input type="number" class="form-control" id="fSvcMins" min="1" placeholder="10"/>
           </div>
           <div class="col-12">
-            <div class="form-check form-switch">
-              <input class="form-check-input" type="checkbox" id="fSvcActive" checked/>
-              <label class="form-check-label" for="fSvcActive">Active</label>
+            <div class="form-check form-switch p-3 border rounded bg-warning-subtle border-warning-subtle">
+              <input class="form-check-input ms-0 me-2" type="checkbox" id="fSvcKYC">
+              <label class="form-check-label fw-600 text-dark" for="fSvcKYC">
+                Requires Customer Identity Verification (KYC)
+              </label>
+              <div class="text-xs text-muted mt-1">
+                If checked, visitors must have an approved government ID on file before booking tokens for this service.
+              </div>
             </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description (Optional)</label>
+            <textarea class="form-control" id="fSvcDesc" rows="2" placeholder="Brief service details for visitors"></textarea>
           </div>
         </div>
       </div>
       <div class="modal-footer border-0 pt-0">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" onclick="saveService()">
-          <span class="spinner-border spinner-border-sm me-1 d-none" id="svcSpin"></span>
+        <button class="btn btn-primary" id="saveSvcBtn" onclick="saveService()">
+          <span class="spinner-border spinner-border-sm me-1 d-none" id="saveSvcSpin"></span>
           Save Service
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Sub-Service Modal -->
+<div class="modal fade" id="subServiceModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-700">Add Sub-Service</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="subSvcParentId"/>
+        <p class="text-muted text-sm mb-3">Adding sub-service under: <strong id="subSvcParentName"></strong></p>
+        <div class="row g-3">
+          <div class="col-8">
+            <label class="form-label">Sub-Service Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="fSubName" placeholder="e.g. ECG Recording" required/>
+          </div>
+          <div class="col-4">
+            <label class="form-label">Code <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="fSubCode" placeholder="ECG-01" required/>
+          </div>
+          <div class="col-6">
+            <label class="form-label">Additional Fee (INR)</label>
+            <input type="number" class="form-control" id="fSubPrice" min="0" step="0.5" value="0.00"/>
+          </div>
+          <div class="col-6">
+            <label class="form-label">Additional Minutes</label>
+            <input type="number" class="form-control" id="fSubMins" min="0" value="0"/>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description (Optional)</label>
+            <textarea class="form-control" id="fSubDesc" rows="2" placeholder="Sub-service details"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveSubBtn" onclick="saveSubService()">
+          <span class="spinner-border spinner-border-sm me-1 d-none" id="saveSubSpin"></span>
+          Add Sub-Service
         </button>
       </div>
     </div>
@@ -135,37 +287,48 @@
 <script>
 let editSvcId = null;
 
-function openAdd() {
+function openAddService() {
   editSvcId = null;
   document.getElementById('serviceModalTitle').textContent = 'Add Service';
-  document.getElementById('fSvcName').value  = '';
-  document.getElementById('fSvcDesc').value  = '';
-  document.getElementById('fSvcPrice').value = '0';
-  document.getElementById('fSvcTime').value  = '10';
-  document.getElementById('fSvcActive').checked = true;
+  document.getElementById('editServiceId').value = '';
+  document.getElementById('fSvcName').value = '';
+  document.getElementById('fSvcCode').value = '';
+  document.getElementById('fSvcBranchId').value = '';
+  document.getElementById('fSvcPrice').value = '0.00';
+  document.getElementById('fSvcMins').value = '10';
+  document.getElementById('fSvcKYC').checked = false;
+  document.getElementById('fSvcDesc').value = '';
 }
 
-function openEdit(s) {
+function openEditService(s) {
   editSvcId = s.id;
   document.getElementById('serviceModalTitle').textContent = 'Edit Service';
-  document.getElementById('fSvcName').value  = s.name;
-  document.getElementById('fSvcDesc').value  = s.description || '';
+  document.getElementById('editServiceId').value = s.id;
+  document.getElementById('fSvcName').value = s.name;
+  document.getElementById('fSvcCode').value = s.service_code || '';
+  document.getElementById('fSvcBranchId').value = s.branch_id || '';
   document.getElementById('fSvcPrice').value = s.price;
-  document.getElementById('fSvcTime').value  = s.estimated_minutes;
-  document.getElementById('fSvcActive').checked = s.is_active;
+  document.getElementById('fSvcMins').value = s.estimated_minutes;
+  document.getElementById('fSvcKYC').checked = !!s.requires_identity_verification;
+  document.getElementById('fSvcDesc').value = s.description || '';
   new bootstrap.Modal(document.getElementById('serviceModal')).show();
 }
 
 async function saveService() {
-  const spin = document.getElementById('svcSpin');
-  spin.classList.remove('d-none');
+  const btn = document.getElementById('saveSvcBtn');
+  const spin = document.getElementById('saveSvcSpin');
+  btn.disabled = true; spin.classList.remove('d-none');
+
   const body = {
     name: document.getElementById('fSvcName').value.trim(),
-    description: document.getElementById('fSvcDesc').value.trim() || null,
+    service_code: document.getElementById('fSvcCode').value.trim() || null,
+    branch_id: document.getElementById('fSvcBranchId').value ? parseInt(document.getElementById('fSvcBranchId').value) : null,
     price: parseFloat(document.getElementById('fSvcPrice').value) || 0,
-    estimated_minutes: parseInt(document.getElementById('fSvcTime').value) || 10,
-    is_active: document.getElementById('fSvcActive').checked,
+    estimated_minutes: parseInt(document.getElementById('fSvcMins').value) || 10,
+    requires_identity_verification: document.getElementById('fSvcKYC').checked,
+    description: document.getElementById('fSvcDesc').value.trim() || null,
   };
+
   try {
     if (editSvcId) {
       await apiRequest(`/org/services/${editSvcId}`, 'PUT', body);
@@ -175,18 +338,68 @@ async function saveService() {
       showToast('Service created');
     }
     bootstrap.Modal.getInstance(document.getElementById('serviceModal'))?.hide();
-    setTimeout(() => location.reload(), 600);
+    setTimeout(() => location.reload(), 500);
   } catch(e) {
     showToast(e.message, 'danger');
-  } finally { spin.classList.add('d-none'); }
+  } finally {
+    btn.disabled = false; spin.classList.add('d-none');
+  }
 }
 
 async function deleteService(id, name) {
-  confirmAction(`Delete service "${name}"?`, async () => {
+  confirmAction(`Delete service "${name}" and all associated sub-services?`, async () => {
     try {
       await apiRequest(`/org/services/${id}`, 'DELETE');
-      showToast(`"${name}" deleted`, 'warning');
-      setTimeout(() => location.reload(), 600);
+      showToast(`Service "${name}" deleted`, 'warning');
+      setTimeout(() => location.reload(), 500);
+    } catch(e) { showToast(e.message, 'danger'); }
+  });
+}
+
+function openAddSubService(parentId, parentName) {
+  document.getElementById('subSvcParentId').value = parentId;
+  document.getElementById('subSvcParentName').textContent = parentName;
+  document.getElementById('fSubName').value = '';
+  document.getElementById('fSubCode').value = '';
+  document.getElementById('fSubPrice').value = '0.00';
+  document.getElementById('fSubMins').value = '0';
+  document.getElementById('fSubDesc').value = '';
+  new bootstrap.Modal(document.getElementById('subServiceModal')).show();
+}
+
+async function saveSubService() {
+  const parentId = document.getElementById('subSvcParentId').value;
+  const btn = document.getElementById('saveSubBtn');
+  const spin = document.getElementById('saveSubSpin');
+  btn.disabled = true; spin.classList.remove('d-none');
+
+  const body = {
+    service_id: parseInt(parentId),
+    name: document.getElementById('fSubName').value.trim(),
+    code: document.getElementById('fSubCode').value.trim(),
+    additional_price: parseFloat(document.getElementById('fSubPrice').value) || 0,
+    additional_minutes: parseInt(document.getElementById('fSubMins').value) || 0,
+    description: document.getElementById('fSubDesc').value.trim() || null,
+  };
+
+  try {
+    await apiRequest(`/org/services/${parentId}/sub-services`, 'POST', body);
+    showToast('Sub-service added successfully');
+    bootstrap.Modal.getInstance(document.getElementById('subServiceModal'))?.hide();
+    setTimeout(() => location.reload(), 500);
+  } catch(e) {
+    showToast(e.message, 'danger');
+  } finally {
+    btn.disabled = false; spin.classList.add('d-none');
+  }
+}
+
+async function deleteSubService(id, name) {
+  confirmAction(`Delete sub-service "${name}"?`, async () => {
+    try {
+      await apiRequest(`/org/sub-services/${id}`, 'DELETE');
+      showToast(`Sub-service deleted`, 'warning');
+      setTimeout(() => location.reload(), 500);
     } catch(e) { showToast(e.message, 'danger'); }
   });
 }

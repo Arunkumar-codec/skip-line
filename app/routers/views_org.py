@@ -237,8 +237,7 @@ async def counters_page(request: Request, db: AsyncSession = Depends(get_db)):
 
     counters = await org_service.list_counters(db, org.id)
     services = await org_service.list_services(db, org.id)
-    # FIX (ISSUE-A): {{ c | tojson }} in counters.html fails on ORM objects.
-    # Pass a plain-dict list that Jinja2 can serialise without error.
+    branches = await branch_service.list_branches(db, org.id)
     counters_json = [
         {
             "id": c.id,
@@ -248,6 +247,8 @@ async def counters_page(request: Request, db: AsyncSession = Depends(get_db)):
             "daily_limit": c.daily_limit,
             "status": c.status if isinstance(c.status, str) else c.status.value,
             "service_id": c.service_id,
+            "branch_id": c.branch_id,
+            "service_ids": [cs.service_id for cs in c.counter_services] if hasattr(c, "counter_services") and c.counter_services else (getattr(c, "service_ids", []) or []),
         }
         for c in counters
     ]
@@ -258,6 +259,7 @@ async def counters_page(request: Request, db: AsyncSession = Depends(get_db)):
         "counters": counters,
         "counters_json": counters_json,
         "services": services,
+        "branches": branches,
     })
 
 
@@ -269,17 +271,32 @@ async def services_page(request: Request, db: AsyncSession = Depends(get_db)):
     if redir:
         return redir
 
-    services = await org_service.list_services(db, org.id)
-    # FIX (ISSUE-B): {{ s | tojson }} in services.html fails on ORM objects.
-    # Pass a plain-dict list for JS consumption.
+    from app.services import catalogue_service
+    services = await catalogue_service.get_service_catalogue(db, org.id, include_sub_services=True)
+    branches = await branch_service.list_branches(db, org.id)
     services_json = [
         {
             "id": s.id,
             "name": s.name,
+            "service_code": s.service_code or "",
+            "branch_id": s.branch_id,
             "description": s.description or "",
             "price": float(s.price),
             "estimated_minutes": s.estimated_minutes,
             "is_active": s.is_active,
+            "requires_identity_verification": s.requires_identity_verification,
+            "sub_services": [
+                {
+                    "id": sub.id,
+                    "name": sub.name,
+                    "code": sub.code,
+                    "additional_price": float(sub.additional_price),
+                    "additional_minutes": sub.additional_minutes,
+                    "is_active": sub.is_active,
+                    "display_order": sub.display_order,
+                }
+                for sub in s.sub_services
+            ],
         }
         for s in services
     ]
@@ -289,6 +306,58 @@ async def services_page(request: Request, db: AsyncSession = Depends(get_db)):
         "active_page": "services",
         "services": services,
         "services_json": services_json,
+        "branches": branches,
+    })
+
+
+# ── Phase 2: Dynamic Custom Forms ─────────────────────────────────────────────
+
+@router.get("/forms", response_class=HTMLResponse)
+async def forms_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import form_service
+    forms = await form_service.list_forms_by_org(db, org.id)
+    services = await org_service.list_services(db, org.id)
+    forms_json = [
+        {
+            "id": f.id,
+            "title": f.title,
+            "description": f.description or "",
+            "service_id": f.service_id,
+            "version": f.version,
+            "is_published": f.is_published,
+            "fields_count": len(f.fields),
+        }
+        for f in forms
+    ]
+    return templates.TemplateResponse("org/forms.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "forms",
+        "forms": forms,
+        "forms_json": forms_json,
+        "services": services,
+    })
+
+
+# ── Phase 2: KYC Identity Verification Review Desk ────────────────────────────
+
+@router.get("/identities", response_class=HTMLResponse)
+async def identities_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import identity_service
+    identities = await identity_service.list_identities_for_review(db, organization_id=org.id)
+    return templates.TemplateResponse("org/identities.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "identities",
+        "identities": identities,
     })
 
 

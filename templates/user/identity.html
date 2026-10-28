@@ -1,0 +1,185 @@
+{% extends "shared/base.html" %}
+{% block title %}ID Verification (KYC){% endblock %}
+{% block sidebar %}{% include "shared/user_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_user.name[0].upper() if current_user else 'U' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_user.name if current_user else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_user.email if current_user else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i>Profile</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Identity Verification (KYC)</h1>
+    <p class="page-subtitle">Submit and manage government identity documents required for specialized queues</p>
+  </div>
+</div>
+
+<div class="row g-4 fade-in-up">
+  <!-- Upload New Document Form -->
+  <div class="col-lg-5">
+    <div class="content-card h-100 p-4">
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <div class="stat-icon blue"><i class="bi bi-shield-lock"></i></div>
+        <div>
+          <h5 class="fw-700 mb-0">Submit Government ID</h5>
+          <span class="text-xs text-muted">AES-256 encrypted at rest & masked on display</span>
+        </div>
+      </div>
+
+      <form id="identityForm" onsubmit="handleIdentitySubmit(event)">
+        <div class="mb-3">
+          <label class="form-label">Identity Document Type <span class="text-danger">*</span></label>
+          <select class="form-select" id="idType" required>
+            <option value="national_id">National ID</option>
+            <option value="aadhaar">Aadhaar Card</option>
+            <option value="passport">Passport</option>
+            <option value="driving_license">Driving License</option>
+            <option value="voters_id">Voter ID</option>
+            <option value="other">Other Official Document</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">ID / Document Number <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="idNumber" placeholder="Enter complete ID number" required/>
+          <div class="form-text text-xs">Your number will be encrypted immediately and only the last 4 characters are shown to staff.</div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label">Supporting Document File (Optional / Recommended)</label>
+          <input type="file" class="form-control" id="idFile" accept=".pdf,.jpg,.jpeg,.png,.webp"/>
+          <div class="form-text text-xs">Accepted formats: PDF, JPG, PNG, WEBP (max 10MB).</div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100" id="submitBtn">
+          <span class="spinner-border spinner-border-sm me-1 d-none" id="submitSpin"></span>
+          <i class="bi bi-cloud-arrow-up me-1"></i>Submit for Verification
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Verification History & Status -->
+  <div class="col-lg-7">
+    <div class="content-card h-100 p-4">
+      <h5 class="fw-700 mb-3">Your Verification Records</h5>
+
+      {% if identities %}
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>ID Type</th>
+              <th>Masked Number</th>
+              <th>Submitted</th>
+              <th>Document</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for id_rec in identities %}
+            <tr>
+              <td>
+                <span class="badge bg-secondary-subtle text-secondary border text-xs text-uppercase font-monospace">
+                  {{ id_rec.id_type }}
+                </span>
+              </td>
+              <td>
+                <span class="font-monospace fw-700 text-dark">{{ id_rec.masked_id_number }}</span>
+              </td>
+              <td class="text-xs text-muted">
+                {{ id_rec.created_at.strftime('%Y-%m-%d') if id_rec.created_at else '—' }}
+              </td>
+              <td>
+                {% if id_rec.document_path %}
+                  <a href="/user/identity/{{ id_rec.id }}/document" target="_blank" class="btn btn-xs btn-outline-primary">
+                    <i class="bi bi-file-earmark-arrow-down me-1"></i>View
+                  </a>
+                {% else %}
+                  <span class="text-xs text-muted">None</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if id_rec.status == 'approved' %}
+                  <span class="badge bg-success-subtle text-success border text-xs"><i class="bi bi-check-circle me-1"></i>Approved</span>
+                {% elif id_rec.status == 'rejected' %}
+                  <span class="badge bg-danger-subtle text-danger border text-xs" title="{{ id_rec.rejection_reason or '' }}"><i class="bi bi-x-circle me-1"></i>Rejected</span>
+                {% else %}
+                  <span class="badge bg-warning-subtle text-warning border text-xs"><i class="bi bi-hourglass-split me-1"></i>Pending Review</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% if id_rec.status == 'rejected' and id_rec.rejection_reason %}
+            <tr class="bg-danger-subtle text-danger">
+              <td colspan="4" class="p-2 text-xs">
+                <i class="bi bi-info-circle me-1"></i><strong>Rejection Note:</strong> {{ id_rec.rejection_reason }}
+              </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-5">
+        <i class="bi bi-shield-exclamation fs-1 text-muted mb-2 d-block"></i>
+        <h6 class="text-muted">No identity documents submitted yet</h6>
+        <p class="text-xs text-muted">Some organizations require identity verification before booking specialized appointments.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function handleIdentitySubmit(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const spin = document.getElementById('submitSpin');
+  btn.disabled = true; spin.classList.remove('d-none');
+
+  const formData = new FormData();
+  formData.append('id_type', document.getElementById('idType').value);
+  formData.append('id_number', document.getElementById('idNumber').value.trim());
+
+  const fileInput = document.getElementById('idFile');
+  if (fileInput.files.length > 0) {
+    formData.append('document', fileInput.files[0]);
+  }
+
+  try {
+    const res = await fetch('/user/identity/submit', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || data.message || 'Submission failed');
+    }
+    showToast('Identity document submitted successfully');
+    setTimeout(() => location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'danger');
+  } finally {
+    btn.disabled = false; spin.classList.add('d-none');
+  }
+}
+</script>
+{% endblock %}

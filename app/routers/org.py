@@ -7,16 +7,39 @@ to /api/* so that the HTML view router always wins the first-match.
 """
 
 import math
+from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_org
+from app.dependencies import (
+    AuthenticatedPrincipal,
+    get_current_org,
+    get_current_principal,
+    require_permission,
+)
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.branch import BranchCreate, BranchRead, BranchUpdate
 from app.schemas.common import APIResponse, MessageResponse, PaginatedResponse
 from app.schemas.counter import CounterCreate, CounterRead, CounterUpdate
 from app.schemas.employee import EmployeeCreate, EmployeeRead, EmployeeUpdate
+from app.schemas.catalogue import (
+    CounterServicesAssignRequest,
+    ServiceDetailRead,
+    ServiceRollup,
+    SubServiceCreate,
+    SubServiceRead,
+    SubServiceUpdate,
+)
+from app.schemas.form import (
+    CustomFormCreate,
+    CustomFormRead,
+    CustomFormUpdate,
+    TokenFormSnapshotRead,
+)
+from app.schemas.identity import IdentityReviewRequest, UserIdentityRead
 from app.schemas.organization import OrgRead, OrgRegisterRequest, OrgUpdateRequest
 from app.schemas.rbac import PermissionRead, RoleAssignmentRead, RoleAssignRequest, RoleRead
 from app.schemas.service import ServiceCreate, ServiceRead, ServiceUpdate
@@ -25,7 +48,10 @@ from app.services import (
     admin_service,
     audit_service,
     branch_service,
+    catalogue_service,
     employee_service,
+    form_service,
+    identity_service,
     org_service,
     rbac_service,
     token_service,
@@ -515,3 +541,365 @@ async def update_setting(
 ):
     await org_service.upsert_setting(db, org.id, key, value)
     return MessageResponse(message="Setting updated")
+
+
+# ── Phase 2: Sub-Services & Hierarchy ─────────────────────────────────────────
+
+@router.post("/services/{service_id}/sub-services", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+@router.post("/sub-services", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def create_sub_service_api(
+    body: SubServiceCreate,
+    service_id: Optional[int] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    target_service_id = service_id or body.service_id
+    if not target_service_id:
+        raise HTTPException(status_code=400, detail="service_id is required")
+
+    # Verify service belongs to organization
+    from models.service import Service
+    service = await db.get(Service, target_service_id)
+    if not service or service.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    sub = await catalogue_service.create_sub_service(
+        db=db,
+        service_id=target_service_id,
+        name=body.name,
+        code=body.code,
+        description=body.description,
+        additional_price=body.additional_price,
+        additional_minutes=body.additional_minutes,
+        is_active=body.is_active,
+        display_order=body.display_order,
+    )
+    return APIResponse(message="Sub-service created", data=SubServiceRead.model_validate(sub))
+
+
+@router.get("/services/{service_id}/sub-services", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def list_sub_services_api(
+    service_id: int,
+    active_only: bool = False,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.service import Service
+    service = await db.get(Service, service_id)
+    if not service or service.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    sub_services = await catalogue_service.list_sub_services(db, service_id, active_only=active_only)
+    return APIResponse(data=[SubServiceRead.model_validate(s) for s in sub_services])
+
+
+@router.put("/sub-services/{sub_service_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def update_sub_service_api(
+    sub_service_id: int,
+    body: SubServiceUpdate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.sub_service import SubService
+    from models.service import Service
+    sub = await db.get(SubService, sub_service_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Sub-service not found")
+    parent_service = await db.get(Service, sub.service_id)
+    if not parent_service or parent_service.organization_id != org.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    updated = await catalogue_service.update_sub_service(
+        db=db,
+        sub_service_id=sub_service_id,
+        name=body.name,
+        code=body.code,
+        description=body.description,
+        additional_price=body.additional_price,
+        additional_minutes=body.additional_minutes,
+        is_active=body.is_active,
+        display_order=body.display_order,
+    )
+    return APIResponse(message="Sub-service updated", data=SubServiceRead.model_validate(updated))
+
+
+@router.delete("/sub-services/{sub_service_id}", response_model=MessageResponse, dependencies=[Depends(get_current_org)])
+async def delete_sub_service_api(
+    sub_service_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.sub_service import SubService
+    from models.service import Service
+    sub = await db.get(SubService, sub_service_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Sub-service not found")
+    parent_service = await db.get(Service, sub.service_id)
+    if not parent_service or parent_service.organization_id != org.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    deleted = await catalogue_service.delete_sub_service(db, sub_service_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Sub-service not found")
+    return MessageResponse(message="Sub-service deleted")
+
+
+@router.get("/services/{service_id}/rollup", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_service_rollup_api(
+    service_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.service import Service
+    service = await db.get(Service, service_id)
+    if not service or service.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    subs = await catalogue_service.list_sub_services(db, service_id, active_only=True)
+    rollup = catalogue_service.calculate_service_rollup(service, subs)
+    return APIResponse(data=ServiceRollup.model_validate(rollup))
+
+
+# ── Phase 2: Counter Services (Many-to-Many Routing) ──────────────────────────
+
+@router.post("/counters/{counter_id}/services", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def assign_counter_services_api(
+    counter_id: int,
+    body: CounterServicesAssignRequest,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.counter import Counter
+    counter = await db.get(Counter, counter_id)
+    if not counter or counter.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Counter not found")
+
+    mappings = await catalogue_service.assign_services_to_counter(
+        db, counter_id, body.service_ids, body.primary_service_id
+    )
+    return APIResponse(message="Services assigned to counter successfully", data={"assigned_count": len(mappings)})
+
+
+@router.get("/counters/{counter_id}/services", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_counter_services_api(
+    counter_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.counter import Counter
+    counter = await db.get(Counter, counter_id)
+    if not counter or counter.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Counter not found")
+
+    services = await catalogue_service.get_counter_services(db, counter_id)
+    return APIResponse(data=[ServiceRead.model_validate(s) for s in services])
+
+
+# ── Phase 2: Dynamic Custom Forms ─────────────────────────────────────────────
+
+@router.post("/forms", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def create_custom_form_api(
+    body: CustomFormCreate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    fields_dict = [f.model_dump() for f in body.fields]
+    form = await form_service.create_form(
+        db=db,
+        organization_id=org.id,
+        title=body.title,
+        description=body.description,
+        service_id=body.service_id,
+        fields_data=fields_dict,
+        is_published=body.is_published,
+    )
+    return APIResponse(message="Custom form created", data=CustomFormRead.model_validate(form))
+
+
+@router.get("/api/forms", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+@router.get("/forms/list", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def list_custom_forms_api(
+    service_id: Optional[int] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    forms = await form_service.list_forms_by_org(db, org.id, service_id=service_id)
+    return APIResponse(data=[CustomFormRead.model_validate(f) for f in forms])
+
+
+@router.get("/api/forms/{form_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+@router.get("/forms/{form_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_custom_form_api(
+    form_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    form = await form_service.get_form_by_id(db, form_id)
+    if not form or form.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Form not found")
+    return APIResponse(data=CustomFormRead.model_validate(form))
+
+
+@router.put("/forms/{form_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def update_custom_form_api(
+    form_id: int,
+    body: CustomFormUpdate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    fields_dict = [f.model_dump() for f in body.fields] if body.fields is not None else None
+    form = await form_service.update_form(
+        db=db,
+        organization_id=org.id,
+        form_id=form_id,
+        title=body.title,
+        description=body.description,
+        service_id=body.service_id,
+        fields_data=fields_dict,
+        is_published=body.is_published,
+    )
+    return APIResponse(message="Custom form updated", data=CustomFormRead.model_validate(form))
+
+
+@router.delete("/forms/{form_id}", response_model=MessageResponse, dependencies=[Depends(get_current_org)])
+async def delete_custom_form_api(
+    form_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await form_service.delete_form(db, org.id, form_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Form not found")
+    return MessageResponse(message="Custom form deleted")
+
+
+@router.post("/forms/{form_id}/publish", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def publish_custom_form_api(
+    form_id: int,
+    is_published: bool = True,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    form = await form_service.update_form(
+        db=db,
+        organization_id=org.id,
+        form_id=form_id,
+        is_published=is_published,
+    )
+    msg = "Form published" if is_published else "Form unpublished"
+    return APIResponse(message=msg, data=CustomFormRead.model_validate(form))
+
+
+@router.post("/forms/{form_id}/retire", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def retire_custom_form_api(
+    form_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    form = await form_service.retire_form(db=db, organization_id=org.id, form_id=form_id)
+    return APIResponse(message="Form retired successfully", data=CustomFormRead.model_validate(form))
+
+
+@router.post("/forms/{form_id}/duplicate", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def duplicate_custom_form_api(
+    form_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    duplicated = await form_service.duplicate_form(db=db, organization_id=org.id, form_id=form_id)
+    return APIResponse(message="Form duplicated successfully", data=CustomFormRead.model_validate(duplicated))
+
+
+@router.get("/tokens/{token_id}/form", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_org_token_form_api(
+    token_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select
+    from models.token import Token
+    from models.custom_form import TokenFormSnapshot
+
+    token = await db.get(Token, token_id)
+    if not token or token.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    snap_stmt = (
+        select(TokenFormSnapshot)
+        .where(TokenFormSnapshot.token_id == token_id)
+        .options(selectinload(TokenFormSnapshot.answers))
+    )
+    snap_res = await db.execute(snap_stmt)
+    snapshot = snap_res.scalar_one_or_none()
+    if not snapshot:
+        return APIResponse(data=None)
+
+    return APIResponse(data=TokenFormSnapshotRead.model_validate(snapshot))
+
+
+# ── Phase 2: Customer Identity Verification (KYC) Desk ───────────────────────
+
+@router.get("/api/identities", response_model=APIResponse)
+@router.get("/identities/review", response_model=APIResponse)
+async def list_identities_for_review_api(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    principal: AuthenticatedPrincipal = Depends(require_permission("identity:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    records = await identity_service.list_identities_for_review(
+        db, organization_id=principal.organization_id, status_filter=status, limit=limit, offset=offset
+    )
+    return APIResponse(data=[UserIdentityRead.model_validate(r) for r in records])
+
+
+@router.post("/identities/{identity_id}/review", response_model=APIResponse)
+async def review_identity_api(
+    identity_id: int,
+    body: IdentityReviewRequest,
+    principal: AuthenticatedPrincipal = Depends(require_permission("identity:review")),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.user_identity import UserIdentity
+    identity = await db.get(UserIdentity, identity_id)
+    if not identity:
+        raise HTTPException(status_code=404, detail="Identity record not found")
+    if identity.organization_id is not None and identity.organization_id != principal.organization_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Cross-tenant identity access denied")
+
+    reviewer_employee_id = principal.id if principal.role == "employee" else None
+
+    updated = await identity_service.review_identity(
+        db=db,
+        identity_id=identity_id,
+        reviewer_id=reviewer_employee_id,
+        action=body.action,
+        rejection_reason=body.rejection_reason,
+        expires_at=body.expires_at,
+    )
+    return APIResponse(
+        message=f"Identity {body.action}ed successfully",
+        data=UserIdentityRead.model_validate(updated),
+    )
+
+
+@router.get("/identities/{identity_id}/document")
+async def get_identity_document_org_api(
+    identity_id: int,
+    principal: AuthenticatedPrincipal = Depends(require_permission("identity:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.user_identity import UserIdentity
+    identity = await db.get(UserIdentity, identity_id)
+    if not identity:
+        raise HTTPException(status_code=404, detail="Identity record not found")
+    if identity.organization_id is not None and identity.organization_id != principal.organization_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Cross-tenant document access denied")
+    if not identity.document_path or not Path(identity.document_path).exists():
+        raise HTTPException(status_code=404, detail="Document file not found")
+
+    ext = Path(identity.document_path).suffix.lower()
+    media_type = "application/pdf" if ext == ".pdf" else f"image/{ext.replace('.', '')}"
+    return FileResponse(identity.document_path, media_type=media_type)

@@ -306,3 +306,21 @@ async def active_tokens_page(request: Request, db: AsyncSession = Depends(get_db
         "active_page": "active_tokens",
         "active_tokens": active,
     })
+
+
+# ── Customer Identity Verification (KYC) page ─────────────────────────────────
+
+@router.get("/identity", response_class=HTMLResponse)
+async def user_identity_page(request: Request, db: AsyncSession = Depends(get_db)):
+    user, redir = await _get_user_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import identity_service
+    records = await identity_service.list_user_identities(db, user.id)
+    return templates.TemplateResponse("user/identity.html", {
+        "request": request,
+        "current_user": user,
+        "active_page": "identity",
+        "identities": records,
+    })

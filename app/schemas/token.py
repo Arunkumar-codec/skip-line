@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel
 from models.token import TokenStatus
 
@@ -10,15 +10,19 @@ from models.token import TokenStatus
 class TokenBookRequest(BaseModel):
     """Authenticated user booking a token."""
     organization_id: int
-    counter_id: int
+    counter_id: Optional[int] = None
     service_id: Optional[int] = None
+    sub_service_ids: Optional[list[int]] = None
+    form_answers: Optional[dict[str, Any]] = None
 
 
 class KioskTokenRequest(BaseModel):
     """Guest booking from a kiosk — no login required."""
     organization_id: int
-    counter_id: int
+    counter_id: Optional[int] = None
     service_id: Optional[int] = None
+    sub_service_ids: Optional[list[int]] = None
+    form_answers: Optional[dict[str, Any]] = None
     guest_name: str
     guest_mobile: str
 

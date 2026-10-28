@@ -1,0 +1,357 @@
+{% extends "shared/base.html" %}
+{% block title %}Custom Forms{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Custom Form Builder</h1>
+    <p class="page-subtitle">Design dynamic intake questionnaires and collect visitor details upon queue booking</p>
+  </div>
+  <button class="btn btn-primary" onclick="openAddForm()">
+    <i class="bi bi-plus-lg me-1"></i>New Custom Form
+  </button>
+</div>
+
+<!-- Security Alert (FORM-007) -->
+<div class="alert alert-info border-info-subtle fade-in-up d-flex align-items-center gap-3">
+  <i class="bi bi-shield-check fs-3 text-info"></i>
+  <div>
+    <strong class="d-block text-dark">Data Security & Compliance Policy (FORM-007)</strong>
+    <span class="text-xs text-muted">
+      Custom forms strictly forbid capturing authentication credentials, passwords, PINs, OTPs, or payment card details.
+      Form fields attempting to collect restricted credential information will be automatically rejected.
+    </span>
+  </div>
+</div>
+
+<div class="row g-3 fade-in-up">
+  {% for f in forms %}
+  <div class="col-md-6 col-xl-4">
+    <div class="content-card h-100 d-flex flex-column">
+      <div class="p-4 flex-grow-1">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div class="stat-icon purple"><i class="bi bi-ui-checks"></i></div>
+          <div class="d-flex align-items-center gap-1">
+            <span class="badge bg-secondary-subtle text-secondary border text-xs">v{{ f.version }}</span>
+            <span class="badge bg-{{ 'success' if f.is_published else 'warning' }}-subtle text-{{ 'success' if f.is_published else 'warning' }} border text-xs">
+              {{ 'Published' if f.is_published else 'Draft' }}
+            </span>
+          </div>
+        </div>
+
+        <h3 class="fw-700 mb-1">{{ f.title }}</h3>
+        {% if f.description %}
+          <p class="text-muted text-sm mb-3 text-truncate" style="max-height: 40px">{{ f.description }}</p>
+        {% else %}
+          <p class="text-muted text-sm mb-3 fst-italic">No description provided</p>
+        {% endif %}
+
+        <div class="border-top pt-3 mt-auto">
+          <div class="row text-sm g-2">
+            <div class="col-6">
+              <span class="text-muted text-xs">Linked Service</span><br>
+              <strong class="text-truncate d-block">{{ f.service.name if f.service else 'General (All Services)' }}</strong>
+            </div>
+            <div class="col-6">
+              <span class="text-muted text-xs">Fields Count</span><br>
+              <strong>{{ f.fields|length }} Question(s)</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-4 pt-0 mt-auto border-top border-light d-flex gap-2">
+        <button class="btn btn-sm btn-outline-{{ 'warning' if f.is_published else 'success' }} flex-fill"
+                onclick="togglePublish({{ f.id }}, {{ 'false' if f.is_published else 'true' }})">
+          <i class="bi bi-{{ 'eye-slash' if f.is_published else 'check-circle' }} me-1"></i>
+          {{ 'Unpublish' if f.is_published else 'Publish' }}
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteForm({{ f.id }}, '{{ f.title }}')">
+          <i class="bi bi-trash3"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12">
+    <div class="content-card text-center py-5">
+      <i class="bi bi-ui-checks fs-1 text-muted mb-3 d-block"></i>
+      <h5 class="text-muted">No custom forms designed yet</h5>
+      <p class="text-muted small">Create your first dynamic form to gather pre-arrival patient or customer questionnaire answers</p>
+      <button class="btn btn-primary mt-2" onclick="openAddForm()">
+        <i class="bi bi-plus-lg me-1"></i>Create First Form
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Custom Form Designer Modal -->
+<div class="modal fade" id="formDesignerModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-700" id="formModalTitle">Custom Form Designer</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editFormId"/>
+        <div class="row g-3 mb-4">
+          <div class="col-md-8">
+            <label class="form-label">Form Title <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="fFormTitle" placeholder="e.g. Patient Initial Health Screening" required/>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Attached Service</label>
+            <select class="form-select" id="fFormServiceId">
+              <option value="">— General / Not Linked —</option>
+              {% for s in services %}
+              <option value="{{ s.id }}">{{ s.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description / Instructions</label>
+            <textarea class="form-control" id="fFormDesc" rows="2" placeholder="Brief instruction displayed to visitor at the top of the form"></textarea>
+          </div>
+          <div class="col-12">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="fFormPublished" checked>
+              <label class="form-check-label fw-600" for="fFormPublished">Publish Immediately</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="fw-700 mb-0">Form Questionnaire Fields</h6>
+          <button type="button" class="btn btn-sm btn-outline-primary" onclick="addFieldRow()">
+            <i class="bi bi-plus-circle me-1"></i>Add Field
+          </button>
+        </div>
+
+        <div id="fieldsContainer" class="d-flex flex-column gap-3">
+          <!-- Dynamic Field Rows Inserted Here -->
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveFormBtn" onclick="saveFormDefinition()">
+          <span class="spinner-border spinner-border-sm me-1 d-none" id="saveFormSpin"></span>
+          Save Form
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let fieldCounter = 0;
+
+function openAddForm() {
+  document.getElementById('editFormId').value = '';
+  document.getElementById('formModalTitle').textContent = 'Create Custom Form';
+  document.getElementById('fFormTitle').value = '';
+  document.getElementById('fFormDesc').value = '';
+  document.getElementById('fFormServiceId').value = '';
+  document.getElementById('fFormPublished').checked = true;
+  document.getElementById('fieldsContainer').innerHTML = '';
+  fieldCounter = 0;
+
+  // Add 2 default fields
+  addFieldRow('full_name', 'Full Legal Name', 'text', true, 'As per government ID');
+  addFieldRow('reason_for_visit', 'Reason for Visit', 'textarea', true, 'Briefly describe your symptoms or inquiry');
+
+  new bootstrap.Modal(document.getElementById('formDesignerModal')).show();
+}
+
+function addFieldRow(key = '', label = '', type = 'text', required = false, placeholder = '') {
+  fieldCounter++;
+  const fId = fieldCounter;
+  const container = document.getElementById('fieldsContainer');
+
+  const card = document.createElement('div');
+  card.className = 'border rounded p-3 bg-light-subtle field-card';
+  card.id = `field_row_${fId}`;
+  card.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <span class="badge bg-secondary text-xs">Field #${fId}</span>
+      <button type="button" class="btn btn-link btn-sm text-danger p-0" onclick="removeFieldRow(${fId})">
+        <i class="bi bi-trash3"></i> Remove
+      </button>
+    </div>
+    <div class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label text-xs text-muted mb-1">Field Label *</label>
+        <input type="text" class="form-control form-control-sm f-label" value="${label}" placeholder="e.g. Blood Group" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label text-xs text-muted mb-1">Field Key (Slug) *</label>
+        <input type="text" class="form-control form-control-sm f-key font-monospace" value="${key}" placeholder="e.g. blood_group" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label text-xs text-muted mb-1">Field Type</label>
+        <select class="form-select form-select-sm f-type" onchange="toggleOptionInput(${fId}, this.value)">
+          <option value="text" ${type === 'text' ? 'selected' : ''}>Text Input</option>
+          <option value="textarea" ${type === 'textarea' ? 'selected' : ''}>Text Area</option>
+          <option value="number" ${type === 'number' ? 'selected' : ''}>Number</option>
+          <option value="select" ${type === 'select' ? 'selected' : ''}>Dropdown Select</option>
+          <option value="radio" ${type === 'radio' ? 'selected' : ''}>Radio Buttons</option>
+          <option value="checkbox" ${type === 'checkbox' ? 'selected' : ''}>Checkbox</option>
+          <option value="date" ${type === 'date' ? 'selected' : ''}>Date</option>
+        </select>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <div class="form-check mb-1">
+          <input class="form-check-input f-req" type="checkbox" id="req_${fId}" ${required ? 'checked' : ''}>
+          <label class="form-check-label text-xs" for="req_${fId}">Required</label>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label text-xs text-muted mb-1">Placeholder / Hint</label>
+        <input type="text" class="form-control form-control-sm f-placeholder" value="${placeholder}" placeholder="Display hint">
+      </div>
+      <div class="col-md-6 f-options-container ${['select', 'radio', 'checkbox'].includes(type) ? '' : 'd-none'}" id="options_wrap_${fId}">
+        <label class="form-label text-xs text-muted mb-1">Comma-separated Options</label>
+        <input type="text" class="form-control form-control-sm f-options" placeholder="Option 1, Option 2, Option 3">
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+}
+
+function removeFieldRow(fId) {
+  const row = document.getElementById(`field_row_${fId}`);
+  if (row) row.remove();
+}
+
+function toggleOptionInput(fId, val) {
+  const wrap = document.getElementById(`options_wrap_${fId}`);
+  if (!wrap) return;
+  if (['select', 'radio', 'checkbox'].includes(val)) {
+    wrap.classList.remove('d-none');
+  } else {
+    wrap.classList.add('d-none');
+  }
+}
+
+async function saveFormDefinition() {
+  const title = document.getElementById('fFormTitle').value.trim();
+  if (!title) {
+    showToast('Please enter a form title', 'warning');
+    return;
+  }
+
+  const fieldCards = document.querySelectorAll('.field-card');
+  const fields = [];
+
+  const prohibitedRegex = /\b(password|passwd|pin|otp|cvv|cvc|credit[-_ ]card|debit[-_ ]card|card[-_ ]number)\b/i;
+
+  for (let idx = 0; idx < fieldCards.length; idx++) {
+    const card = fieldCards[idx];
+    const key = card.querySelector('.f-key').value.trim();
+    const label = card.querySelector('.f-label').value.trim();
+    const type = card.querySelector('.f-type').value;
+    const required = card.querySelector('.f-req').checked;
+    const placeholder = card.querySelector('.f-placeholder').value.trim();
+    const optionsRaw = card.querySelector('.f-options').value.trim();
+
+    if (!key || !label) {
+      showToast(`Field #${idx + 1} must have both key and label`, 'warning');
+      return;
+    }
+
+    // FORM-007 check
+    if (prohibitedRegex.test(key) || prohibitedRegex.test(label) || prohibitedRegex.test(placeholder)) {
+      showToast('Security Alert: Forms cannot collect passwords, PINs, OTPs, or payment card details (FORM-007)', 'danger');
+      return;
+    }
+
+    const options = [];
+    if (['select', 'radio', 'checkbox'].includes(type) && optionsRaw) {
+      optionsRaw.split(',').forEach((opt, oIdx) => {
+        const trimmed = opt.trim();
+        if (trimmed) {
+          options.push({ option_label: trimmed, option_value: trimmed.toLowerCase().replace(/\s+/g, '_'), order_index: oIdx });
+        }
+      });
+    }
+
+    fields.push({
+      field_key: key,
+      label: label,
+      field_type: type,
+      placeholder: placeholder || null,
+      is_required: required,
+      order_index: idx,
+      options: options,
+    });
+  }
+
+  const body = {
+    title: title,
+    description: document.getElementById('fFormDesc').value.trim() || null,
+    service_id: document.getElementById('fFormServiceId').value ? parseInt(document.getElementById('fFormServiceId').value) : null,
+    is_published: document.getElementById('fFormPublished').checked,
+    fields: fields,
+  };
+
+  const btn = document.getElementById('saveFormBtn');
+  const spin = document.getElementById('saveFormSpin');
+  btn.disabled = true; spin.classList.remove('d-none');
+
+  try {
+    await apiRequest('/org/forms', 'POST', body);
+    showToast('Custom form created successfully');
+    bootstrap.Modal.getInstance(document.getElementById('formDesignerModal'))?.hide();
+    setTimeout(() => location.reload(), 500);
+  } catch (e) {
+    showToast(e.message, 'danger');
+  } finally {
+    btn.disabled = false; spin.classList.add('d-none');
+  }
+}
+
+async function togglePublish(formId, shouldPublish) {
+  try {
+    await apiRequest(`/org/forms/${formId}/publish?is_published=${shouldPublish}`, 'POST');
+    showToast(shouldPublish ? 'Form published' : 'Form unpublished');
+    setTimeout(() => location.reload(), 500);
+  } catch (e) {
+    showToast(e.message, 'danger');
+  }
+}
+
+async function deleteForm(id, title) {
+  confirmAction(`Delete custom form "${title}"? Existing submission snapshots will be safely preserved.`, async () => {
+    try {
+      await apiRequest(`/org/forms/${id}`, 'DELETE');
+      showToast(`Form deleted`, 'warning');
+      setTimeout(() => location.reload(), 500);
+    } catch(e) { showToast(e.message, 'danger'); }
+  });
+}
+</script>
+{% endblock %}

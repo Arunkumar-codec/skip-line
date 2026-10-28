@@ -135,29 +135,70 @@ async def get_org_dashboard_stats(db: AsyncSession, org_id: int) -> dict:
 # ── Counter management ────────────────────────────────────────────────────────
 
 async def list_counters(db: AsyncSession, org_id: int) -> list[Counter]:
+    from sqlalchemy.orm import selectinload
     result = await db.execute(
-        select(Counter).where(Counter.organization_id == org_id).order_by(Counter.counter_number)
+        select(Counter)
+        .where(Counter.organization_id == org_id)
+        .options(selectinload(Counter.counter_services))
+        .order_by(Counter.counter_number)
     )
-    return list(result.scalars().all())
+    counters = list(result.scalars().all())
+    for c in counters:
+        c.service_ids = [cs.service_id for cs in c.counter_services]
+    return counters
 
 
 async def create_counter(db: AsyncSession, org_id: int, data: dict) -> Counter:
+    from app.services import catalogue_service
+    service_ids = data.pop("service_ids", None)
     counter = Counter(organization_id=org_id, **data)
     db.add(counter)
     await db.commit()
     await db.refresh(counter)
+
+    # Assign multi-service mappings
+    if service_ids:
+        await catalogue_service.assign_services_to_counter(
+            db, counter.id, service_ids, primary_service_id=counter.service_id
+        )
+        counter.service_ids = service_ids
+    elif counter.service_id:
+        await catalogue_service.assign_services_to_counter(
+            db, counter.id, [counter.service_id], primary_service_id=counter.service_id
+        )
+        counter.service_ids = [counter.service_id]
+    else:
+        counter.service_ids = []
+
     return counter
 
 
 async def update_counter(db: AsyncSession, counter_id: int, org_id: int, data: dict) -> Counter:
+    from app.services import catalogue_service
     counter = await db.get(Counter, counter_id)
     if not counter or counter.organization_id != org_id:
         raise ValueError("Counter not found")
+
+    service_ids = data.pop("service_ids", None)
     for key, val in data.items():
         if val is not None:
             setattr(counter, key, val)
     await db.commit()
     await db.refresh(counter)
+
+    if service_ids is not None:
+        await catalogue_service.assign_services_to_counter(
+            db, counter.id, service_ids, primary_service_id=counter.service_id
+        )
+        counter.service_ids = service_ids
+    elif counter.service_id:
+        await catalogue_service.assign_services_to_counter(
+            db, counter.id, [counter.service_id], primary_service_id=counter.service_id
+        )
+        counter.service_ids = [counter.service_id]
+    else:
+        counter.service_ids = []
+
     return counter
 
 

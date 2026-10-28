@@ -2,7 +2,6 @@
 {% block title %}Counters{% endblock %}
 {% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
 
-
 {% block topnav_user %}
 <div class="dropdown">
   <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
@@ -27,7 +26,7 @@
 <div class="page-header fade-in-up">
   <div>
     <h1 class="page-title">Counter Management</h1>
-    <p class="page-subtitle">Manage your service counters</p>
+    <p class="page-subtitle">Configure physical counters, branches, and multi-service routing</p>
   </div>
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#counterModal" onclick="openAdd()">
     <i class="bi bi-plus-lg me-1"></i>Add Counter
@@ -37,28 +36,60 @@
 <div class="row g-3 fade-in-up" id="counterGrid">
   {% for c in counters %}
   <div class="col-md-6 col-xl-4">
-    <div class="content-card h-100">
-      <div class="p-4">
-        <div class="d-flex justify-content-between align-items-start mb-3">
+    <div class="content-card h-100 d-flex flex-column">
+      <div class="p-4 flex-grow-1">
+        <div class="d-flex justify-content-between align-items-start mb-2">
           <div class="stat-icon blue"><i class="bi bi-hdd-rack"></i></div>
-          <span class="badge-status badge-{{ c.status }}">{{ c.status }}</span>
+          <div class="d-flex gap-1 align-items-center">
+            {% if c.counter_services and c.counter_services|length > 1 %}
+              <span class="badge bg-purple-subtle text-purple border text-xs"><i class="bi bi-diagram-3 me-1"></i>Multi-Service</span>
+            {% endif %}
+            <span class="badge-status badge-{{ c.status }}">{{ c.status }}</span>
+          </div>
         </div>
         <h3 class="fw-700 mb-1">{{ c.counter_name }}</h3>
-        <p class="text-muted text-sm mb-3">Counter #{{ c.counter_number }}</p>
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <span class="text-muted text-sm">Counter #{{ c.counter_number }}</span>
+          {% if c.branch %}
+            <span class="badge bg-light text-secondary border text-xs"><i class="bi bi-geo-alt me-1"></i>{{ c.branch.name }}</span>
+          {% endif %}
+        </div>
+
         <div class="row text-sm mb-3">
-          <div class="col-6"><span class="text-muted">Prefix</span><br><strong>{{ c.token_prefix }}</strong></div>
+          <div class="col-6"><span class="text-muted">Token Prefix</span><br><strong class="fs-6 text-primary">{{ c.token_prefix }}</strong></div>
           <div class="col-6"><span class="text-muted">Daily Limit</span><br><strong>{{ c.daily_limit }}</strong></div>
         </div>
-        <div class="d-flex gap-2 mt-auto">
-          <button class="btn btn-sm btn-outline-primary flex-fill"
-                  onclick='openEdit({{ counters_json[loop.index0] | tojson }})'>
-            <i class="bi bi-pencil me-1"></i>Edit
-          </button>
-          <button class="btn btn-sm btn-outline-danger"
-                  onclick="deleteCounter({{ c.id }}, '{{ c.counter_name }}')">
-            <i class="bi bi-trash3"></i>
-          </button>
+
+        <div class="mb-3">
+          <div class="text-xs text-muted text-uppercase fw-600 mb-1">Eligible Services</div>
+          <div class="d-flex flex-wrap gap-1">
+            {% if c.counter_services %}
+              {% for cs in c.counter_services %}
+                <span class="badge bg-secondary-subtle text-secondary border text-xs">
+                  {{ cs.service.name }}
+                  {% if cs.is_primary %}<span class="text-primary ms-1" title="Primary Service">★</span>{% endif %}
+                </span>
+              {% endfor %}
+            {% elif c.service %}
+              <span class="badge bg-secondary-subtle text-secondary border text-xs">
+                {{ c.service.name }} <span class="text-primary ms-1">★</span>
+              </span>
+            {% else %}
+              <span class="text-muted text-xs fst-italic">All services / General</span>
+            {% endif %}
+          </div>
         </div>
+      </div>
+
+      <div class="p-4 pt-0 mt-auto border-top border-light d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary flex-fill"
+                onclick='openEdit({{ counters_json[loop.index0] | tojson }})'>
+          <i class="bi bi-pencil me-1"></i>Edit
+        </button>
+        <button class="btn btn-sm btn-outline-danger"
+                onclick="deleteCounter({{ c.id }}, '{{ c.counter_name }}')">
+          <i class="bi bi-trash3"></i>
+        </button>
       </div>
     </div>
   </div>
@@ -67,7 +98,7 @@
     <div class="content-card text-center py-5">
       <i class="bi bi-hdd-rack fs-1 text-muted mb-3 d-block"></i>
       <h5 class="text-muted">No counters yet</h5>
-      <p class="text-muted small">Add your first counter to start accepting tokens</p>
+      <p class="text-muted small">Add your first counter to start accepting tokens and routing queues</p>
       <button class="btn btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#counterModal" onclick="openAdd()">
         <i class="bi bi-plus-lg me-1"></i>Add Counter
       </button>
@@ -78,7 +109,7 @@
 
 <!-- Counter Modal -->
 <div class="modal fade" id="counterModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header border-0 pb-0">
         <h5 class="modal-title fw-700" id="counterModalTitle">Add Counter</h5>
@@ -87,38 +118,64 @@
       <div class="modal-body">
         <input type="hidden" id="editCounterId"/>
         <div class="row g-3">
-          <div class="col-8">
+          <div class="col-md-8">
             <label class="form-label">Counter Name <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="fCounterName" placeholder="e.g. OPD Counter 1" required/>
+            <input type="text" class="form-control" id="fCounterName" placeholder="e.g. Counter 1 - Cash & Support" required/>
           </div>
-          <div class="col-4">
-            <label class="form-label">Number <span class="text-danger">*</span></label>
+          <div class="col-md-4">
+            <label class="form-label">Counter Number <span class="text-danger">*</span></label>
             <input type="number" class="form-control" id="fCounterNumber" min="1" placeholder="1"/>
           </div>
-          <div class="col-4">
+          <div class="col-md-4">
+            <label class="form-label">Branch (Location)</label>
+            <select class="form-select" id="fBranchId">
+              <option value="">— Organization HQ / All —</option>
+              {% for b in branches %}
+              <option value="{{ b.id }}">{{ b.name }} ({{ b.branch_code }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
             <label class="form-label">Token Prefix</label>
             <input type="text" class="form-control" id="fPrefix" maxlength="5" placeholder="A"/>
           </div>
-          <div class="col-4">
+          <div class="col-md-4">
             <label class="form-label">Daily Limit</label>
             <input type="number" class="form-control" id="fDailyLimit" min="1" placeholder="200"/>
           </div>
-          <div class="col-4">
-            <label class="form-label">Status</label>
+          <div class="col-md-6">
+            <label class="form-label">Operational Status</label>
             <select class="form-select" id="fStatus">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="break">Break</option>
             </select>
           </div>
-          <div class="col-12">
-            <label class="form-label">Service (optional)</label>
-            <select class="form-select" id="fServiceId">
-              <option value="">— Any service —</option>
+          <div class="col-md-6">
+            <label class="form-label">Primary Service (Default Routing)</label>
+            <select class="form-select" id="fPrimaryServiceId">
+              <option value="">— Automatic / First Selected —</option>
               {% for s in services %}
               <option value="{{ s.id }}">{{ s.name }}</option>
               {% endfor %}
             </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label fw-600 mb-1">
+              Multi-Service Routing: Select all services this counter handles
+            </label>
+            <p class="text-muted text-xs mb-2">When a visitor selects any of these services, this counter is eligible to serve them.</p>
+            <div class="border rounded p-3 bg-light-subtle d-flex flex-wrap gap-3" id="serviceCheckboxesContainer">
+              {% for s in services %}
+              <div class="form-check">
+                <input class="form-check-input service-check" type="checkbox" value="{{ s.id }}" id="svc_check_{{ s.id }}">
+                <label class="form-check-label text-sm fw-500" for="svc_check_{{ s.id }}">
+                  {{ s.name }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
           </div>
         </div>
       </div>
@@ -142,13 +199,13 @@ function openAdd() {
   editId = null;
   document.getElementById('counterModalTitle').textContent = 'Add Counter';
   document.getElementById('editCounterId').value = '';
-  ['fCounterName','fCounterNumber','fPrefix','fDailyLimit'].forEach(id => {
-    document.getElementById(id).value = '';
-  });
+  ['fCounterName','fCounterNumber'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('fPrefix').value = 'A';
   document.getElementById('fDailyLimit').value = '200';
   document.getElementById('fStatus').value = 'active';
-  document.getElementById('fServiceId').value = '';
+  document.getElementById('fBranchId').value = '';
+  document.getElementById('fPrimaryServiceId').value = '';
+  document.querySelectorAll('.service-check').forEach(cb => cb.checked = false);
 }
 
 function openEdit(c) {
@@ -159,7 +216,14 @@ function openEdit(c) {
   document.getElementById('fPrefix').value        = c.token_prefix;
   document.getElementById('fDailyLimit').value    = c.daily_limit;
   document.getElementById('fStatus').value        = c.status;
-  document.getElementById('fServiceId').value     = c.service_id || '';
+  document.getElementById('fBranchId').value      = c.branch_id || '';
+  document.getElementById('fPrimaryServiceId').value = c.service_id || '';
+
+  const activeSvcIds = c.service_ids || (c.service_id ? [c.service_id] : []);
+  document.querySelectorAll('.service-check').forEach(cb => {
+    cb.checked = activeSvcIds.includes(parseInt(cb.value));
+  });
+
   new bootstrap.Modal(document.getElementById('counterModal')).show();
 }
 
@@ -168,25 +232,30 @@ async function saveCounter() {
   const spin = document.getElementById('saveSpin');
   btn.disabled = true; spin.classList.remove('d-none');
 
+  const selectedSvcIds = Array.from(document.querySelectorAll('.service-check:checked')).map(cb => parseInt(cb.value));
+  const primaryId = document.getElementById('fPrimaryServiceId').value;
+
   const body = {
     counter_name:   document.getElementById('fCounterName').value.trim(),
     counter_number: parseInt(document.getElementById('fCounterNumber').value, 10) || 1,
     token_prefix:   document.getElementById('fPrefix').value.trim() || 'A',
     daily_limit:    parseInt(document.getElementById('fDailyLimit').value) || 200,
     status:         document.getElementById('fStatus').value,
-    service_id:     document.getElementById('fServiceId').value || null,
+    branch_id:      document.getElementById('fBranchId').value ? parseInt(document.getElementById('fBranchId').value) : null,
+    service_id:     primaryId ? parseInt(primaryId) : (selectedSvcIds.length > 0 ? selectedSvcIds[0] : null),
+    service_ids:    selectedSvcIds,
   };
 
   try {
     if (editId) {
       await apiRequest(`/org/counters/${editId}`, 'PUT', body);
-      showToast('Counter updated');
+      showToast('Counter updated successfully');
     } else {
       await apiRequest('/org/counters', 'POST', body);
-      showToast('Counter created');
+      showToast('Counter created successfully');
     }
     bootstrap.Modal.getInstance(document.getElementById('counterModal'))?.hide();
-    setTimeout(() => location.reload(), 600);
+    setTimeout(() => location.reload(), 500);
   } catch(e) {
     showToast(e.message, 'danger');
   } finally {
@@ -199,7 +268,7 @@ async function deleteCounter(id, name) {
     try {
       await apiRequest(`/org/counters/${id}`, 'DELETE');
       showToast(`Counter "${name}" deleted`, 'warning');
-      setTimeout(() => location.reload(), 600);
+      setTimeout(() => location.reload(), 500);
     } catch(e) { showToast(e.message, 'danger'); }
   });
 }

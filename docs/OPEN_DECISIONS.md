@@ -130,8 +130,29 @@ This document outlines key technical, architectural, and business decisions that
 
 ---
 
-## 3. Next Steps & Authorization Request
+## 3. Phase 2 Reconciliation Findings (October 28, 2026)
+
+### Decision 8: Identity-Document Rejection Reason Policy
+- **Context:** Master requirements §5.3 requires the reviewer to "approve, reject, or request more information and **record the decision reason**". The current implementation accepts a rejection with no reason and silently substitutes a default text ("Document does not meet verification requirements.") in [`app/services/identity_service.py`](file:///c:/Arunakumara/skip-line-FINAL/skip-line/app/services/identity_service.py) (`review_identity`, line ~188). The test suite (`tests/api/test_identity_verification.py::test_identity_review_desk_approval_and_rejection`) was adjusted in the Phase 2 reconciliation to accept this behavior while still asserting that **a reason is recorded**.
+- **Options:**
+  - **Option 8A: Accept default-reason substitution (current behavior)**
+    - Reviewer may reject without typing a reason; the audit trail always contains a non-empty reason string.
+    - *Pros:* Faster review desk; audit trail never empty. *Cons:* Reason may be generic and less useful to the customer or to auditors.
+  - **Option 8B: Require an explicit reason on rejection**
+    - Add a Pydantic `model_validator` to `IdentityReviewRequest` (`app/schemas/identity.py`) so `action="reject"` with an empty/missing reason returns 422.
+    - *Pros:* Matches the strict §5.3 reading; produces more meaningful rejection reasons. *Cons:* Small API contract change; test must revert to asserting 422.
+- **Status:** **Deferred to Phase 7 (Trust/KYC hardening)** with user direction to keep current behavior for now. The associated matrix row (USR-003/USR-005 evidence) and the test comment document the divergence. Do not silently change this behavior.
+
+### Decision 9: Sensitive Access Audit Logging Gap (USR-005 / FORM-008)
+- **Context:** Downloading a customer's raw identity document (`/user/identity/{id}/document`, `/org/identities/{id}/document`) and viewing full KYC values are authorized but **not audited**; USR-005 requires recording every authorized access to full values/documents.
+- **Recommendation:** Before Phase 8 security hardening, route document downloads and any future full-value reveal endpoints through the existing audit-log service (`models/audit_log.py`) with actor, target, timestamp, and outcome.
+- **Status:** Recorded as an unresolved gap; no code change made during Phase 2 reconciliation.
+
+---
+
+## 4. Next Steps & Authorization Request
 
 Upon user review of the audit findings, architecture proposal, and open decisions:
 1. Confirm preferred options for Decisions 1 through 7.
 2. Authorize initiation of **Phase 0 (Baseline Stabilization & Test Suite Green)**.
+3. *Update (Oct 28, 2026):* Phases 0–1 committed; Phase 2 (Catalogue) complete in working tree, pending commit. Decisions 8–9 recorded above.

@@ -35,6 +35,8 @@ async def kiosk_book(body: KioskTokenRequest, db: AsyncSession = Depends(get_db)
             user_id=None,
             guest_name=body.guest_name,
             guest_mobile=body.guest_mobile,
+            sub_service_ids=body.sub_service_ids,
+            form_answers=body.form_answers,
         )
         return APIResponse(message="Token issued", data=TokenRead.model_validate(token))
     except ValueError as e:

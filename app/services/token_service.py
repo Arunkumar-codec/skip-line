@@ -7,7 +7,8 @@ Also handles queue position calculation and real-time broadcast triggers.
 
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from decimal import Decimal
+from typing import Any, Optional
 
 from loguru import logger
 from sqlalchemy import func, select, and_, update
@@ -16,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.counter import Counter, CounterStatus
 from models.queue_log import QueueLog
 from models.service import Service
+from models.sub_service import SubService
 from models.token import Token, TokenStatus
 from models.token_history import TokenHistory
+from models.token_service_item import TokenServiceItem
 from app.utils import qr_generator
 
 
@@ -95,19 +98,74 @@ async def _log_action(
 async def book_token(
     db: AsyncSession,
     org_id: int,
-    counter_id: int,
+    counter_id: Optional[int],
     service_id: Optional[int],
     user_id: Optional[int],
     guest_name: Optional[str] = None,
     guest_mobile: Optional[str] = None,
+    sub_service_ids: Optional[list[int]] = None,
+    form_answers: Optional[dict[str, Any]] = None,
 ) -> Token:
-    """Create a new token and assign queue position."""
-    # Validate counter belongs to org and is active
-    counter = await db.get(Counter, counter_id)
-    if not counter or counter.organization_id != org_id:
-        raise ValueError("Counter not found")
-    if counter.status != CounterStatus.ACTIVE:
-        raise ValueError("Counter is not active")
+    """
+    Create a new token and assign queue position.
+    Supports:
+    - Multi-service counter routing when counter_id is omitted or 0
+    - KYC identity verification gating (if service requires KYC)
+    - Sub-services pricing and item breakdown (TokenServiceItem)
+    - Dynamic custom form immutable snapshotting (TokenFormSnapshot & TokenFormAnswer)
+    """
+    service = None
+    if service_id:
+        service = await db.get(Service, service_id)
+        if not service or service.organization_id != org_id:
+            raise ValueError("Service not found")
+
+        # Identity Verification Gating
+        if service.requires_identity_verification:
+            if not user_id:
+                raise ValueError(
+                    "Identity verification is required for this service. "
+                    "Guest bookings are not permitted."
+                )
+            from app.services import identity_service
+            is_verified = await identity_service.check_user_identity_verified(db, user_id, org_id)
+            if not is_verified:
+                raise ValueError(
+                    "Identity verification required: You must have an approved identity "
+                    "verification on file before booking this service."
+                )
+
+    # Multi-service Counter Routing
+    if not counter_id:
+        if not service_id:
+            raise ValueError("Either counter_id or service_id must be provided to book a token.")
+        from app.services import catalogue_service
+        eligible_counters = await catalogue_service.get_eligible_counters_for_service(
+            db, service_id, org_id, branch_id=service.branch_id if service else None
+        )
+        if not eligible_counters:
+            raise ValueError("No active counter is currently available for this service.")
+
+        # Route to eligible counter with lowest current waiting count
+        best_counter = eligible_counters[0]
+        min_waiting = 999999
+        for c in eligible_counters:
+            waiting_cnt = (await db.execute(
+                select(func.count()).select_from(Token).where(
+                    and_(Token.counter_id == c.id, Token.status == TokenStatus.WAITING)
+                )
+            )).scalar() or 0
+            if waiting_cnt < min_waiting:
+                min_waiting = waiting_cnt
+                best_counter = c
+        counter = best_counter
+        counter_id = counter.id
+    else:
+        counter = await db.get(Counter, counter_id)
+        if not counter or counter.organization_id != org_id:
+            raise ValueError("Counter not found")
+        if counter.status != CounterStatus.ACTIVE:
+            raise ValueError("Counter is not active")
 
     # Check daily limit
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -122,6 +180,19 @@ async def book_token(
     seq = await _next_sequence(db, counter_id)
     token_number = f"{counter.token_prefix}-{seq:03d}"
 
+    # Calculate pricing rollup for token snapshot
+    amount_paid = service.price if service else Decimal("0.00")
+    selected_subs: list[SubService] = []
+    if sub_service_ids:
+        subs_stmt = select(SubService).where(
+            SubService.id.in_(sub_service_ids),
+            SubService.is_active.is_(True),
+        )
+        subs_res = await db.execute(subs_stmt)
+        selected_subs = list(subs_res.scalars().all())
+        for s in selected_subs:
+            amount_paid += s.additional_price
+
     token = Token(
         organization_id=org_id,
         user_id=user_id,
@@ -132,10 +203,40 @@ async def book_token(
         status=TokenStatus.WAITING,
         guest_name=guest_name,
         guest_mobile=guest_mobile,
+        amount_paid=amount_paid,
         booked_at=datetime.now(timezone.utc),
     )
     db.add(token)
-    await db.flush()   # get token.id before generating QR
+    await db.flush()   # get token.id
+
+    # Record TokenServiceItem breakdown
+    if service_id and service:
+        db.add(TokenServiceItem(
+            token_id=token.id,
+            service_id=service_id,
+            sub_service_id=None,
+            price=service.price,
+            estimated_minutes=service.estimated_minutes,
+            sequence_order=1,
+        ))
+        for idx, sub_item in enumerate(selected_subs, start=2):
+            db.add(TokenServiceItem(
+                token_id=token.id,
+                service_id=service_id,
+                sub_service_id=sub_item.id,
+                price=sub_item.additional_price,
+                estimated_minutes=sub_item.additional_minutes,
+                sequence_order=idx,
+            ))
+
+    # Form Snapshotting
+    if service_id:
+        from app.services import form_service
+        active_form = await form_service.get_active_form_for_service(db, service_id)
+        if active_form:
+            await form_service.create_token_form_snapshot(
+                db, token.id, active_form, form_answers or {}
+            )
 
     # Generate QR code
     qr_path = await qr_generator.generate_token_qr(
