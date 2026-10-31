@@ -3,6 +3,15 @@
 
 .PHONY: help install dev migrate seed test lint docker-up docker-down clean
 
+# Load the developer's .env (if present) so authenticated targets work without
+# exporting variables manually. .env is gitignored and NEVER committed.
+# Without .env, credential-requiring targets fail with a clear error instead
+# of silently using an insecure built-in password.
+ifneq ($(wildcard .env),)
+include .env
+export
+endif
+
 help:
 	@echo "Skip Line — Available commands:"
 	@echo "  make install     Install Python dependencies"
@@ -27,7 +36,7 @@ migrate:
 	alembic upgrade head
 
 seed:
-	mysql -u $${DB_USER:-skipline_user} -p$${DB_PASSWORD:-skipline_pass} $${DB_NAME:-skipline} < database/seed.sql
+	mysql -u $${DB_USER:-skipline_user} -p"$${DB_PASSWORD:?DB_PASSWORD is required to seed - export it or add it to the .env file (make env creates one) }" $${DB_NAME:-skipline} < database/seed.sql
 
 test:
 	pytest

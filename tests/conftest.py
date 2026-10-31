@@ -5,10 +5,20 @@ Shared pytest fixtures.
 Uses an in-memory SQLite database for fast, isolated tests.
 """
 
+import os
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+
+# Test-only dummies (NOT real credentials), applied before app.config resolves
+# its Settings singleton so test environments without a developer .env behave
+# like a configured local setup. setdefault keeps precedence for real values.
+os.environ.setdefault("ADMIN_PASSWORD", "test-admin-bootstrap-password!")
+os.environ.setdefault("DB_PASSWORD", "test-db-password-dummy")
+os.environ.setdefault("SECRET_KEY", "test-only-secret-key-not-for-production-0123456789abcdef")
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-secret-not-for-production-0123456789abcdef")
 
 from app.config import settings
 from app.database import Base, get_db

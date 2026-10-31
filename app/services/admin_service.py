@@ -86,6 +86,13 @@ async def seed_default_admin(db: Optional[AsyncSession] = None) -> None:
         result = await db.execute(select(func.count()).select_from(Admin))
         count = result.scalar()
         if count == 0:
+            if not settings.admin_password:
+                logger.warning(
+                    "ADMIN_PASSWORD is not configured — skipping default "
+                    "admin seeding. Set ADMIN_PASSWORD and restart to "
+                    "provision the first Super Admin."
+                )
+                return
             admin = Admin(
                 name=settings.admin_name,
                 email=settings.admin_email,
@@ -103,6 +110,13 @@ async def seed_default_admin(db: Optional[AsyncSession] = None) -> None:
         result = await session.execute(select(func.count()).select_from(Admin))
         count = result.scalar()
         if count == 0:
+            if not settings.admin_password:
+                logger.warning(
+                    "ADMIN_PASSWORD is not configured — skipping default "
+                    "admin seeding. Set ADMIN_PASSWORD and restart to "
+                    "provision the first Super Admin."
+                )
+                return
             admin = Admin(
                 name=settings.admin_name,
                 email=settings.admin_email,

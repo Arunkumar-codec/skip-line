@@ -7,17 +7,17 @@ services:
     container_name: skipline_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required - export it or add it to .env (see .env.example)}
       MYSQL_DATABASE: ${DB_NAME:-skipline}
       MYSQL_USER: ${DB_USER:-skipline_user}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-skipline_pass}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required - export it or add it to .env (see .env.example)}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required - export it or add it to .env}"]
       interval: 10s
       timeout: 5s
       retries: 5
