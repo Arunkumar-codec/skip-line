@@ -1,0 +1,295 @@
+{% extends "shared/base.html" %}
+{% block title %}Schedule{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Schedule &amp; Holiday Calendar</h1>
+    <p class="page-subtitle">Organization-level weekly operating hours, slot intervals and date exceptions</p>
+  </div>
+</div>
+
+<div class="content-card p-4 mb-4 fade-in-up">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h3 class="fw-700 mb-1">Weekly Operating Hours</h3>
+      <div class="text-muted text-sm">
+        Publish a row per weekday (open &rsaquo; close, slot interval in minutes) or mark it closed.
+        Days with no published row are NOT OPEN. Counter/branch/service overrides and capacity
+        rules are managed via the schedule API.
+      </div>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle" id="weeklyTable">
+      <thead>
+        <tr class="text-muted text-xs text-uppercase">
+          <th>Day</th><th style="width:90px">Closed</th>
+          <th style="width:150px">Opens</th><th style="width:150px">Closes</th>
+          <th style="width:130px">Slot (min)</th><th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="weeklyBody"></tbody>
+    </table>
+  </div>
+  <div class="text-muted text-xs mt-2">
+    Edits that affect confirmed tokens (slots already booked) must run the schedule-change
+    impact workflow (<a href="/org/api/audit-logs">audit trail</a>, API
+    <code>/org/schedules/changes/preview</code> &rarr; <code>/confirm</code>). This panel only
+    writes configuration rows &mdash; generated slots and existing bookings are never modified.
+  </div>
+</div>
+
+<div class="content-card p-4 fade-in-up">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h3 class="fw-700 mb-1">Holiday Calendar &amp; Date Exceptions</h3>
+      <div class="text-muted text-sm">
+        Closures prevail over weekly hours; special hours replace the day's window;
+        reduced capacity scales slot capacity down.
+      </div>
+    </div>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#exceptionModal">
+      <i class="bi bi-plus-lg me-1"></i>Add Exception
+    </button>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle" id="exceptionTable">
+      <thead>
+        <tr class="text-muted text-xs text-uppercase">
+          <th>Date</th><th>Type</th><th>Reason</th><th>Detail</th><th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="exceptionBody"></tbody>
+    </table>
+  </div>
+  <div id="exceptionEmpty" class="text-muted text-sm d-none">No date exceptions configured.</div>
+</div>
+
+<!-- Exception modal -->
+<div class="modal fade" id="exceptionModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add Date Exception</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger py-2 px-3 text-sm d-none" id="exceptionError"></div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label text-sm">Exception date</label>
+            <input type="date" class="form-control" id="exceptionDate">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-sm">Type</label>
+            <select class="form-select" id="exceptionType">
+              <option value="holiday">Holiday (closed)</option>
+              <option value="emergency_closure">Emergency closure (closed)</option>
+              <option value="maintenance">Maintenance (closed)</option>
+              <option value="special_hours">Special hours (custom window)</option>
+              <option value="reduced_capacity">Reduced capacity (scaled slots)</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label text-sm">User-facing reason</label>
+            <input type="text" class="form-control" id="exceptionReason" maxlength="255"
+                   placeholder="e.g. Diwali / renovation / staff training">
+          </div>
+          <div class="col-md-6 d-none" id="specialHoursFields">
+            <label class="form-label text-sm">Special window opens / closes</label>
+            <div class="d-flex gap-2">
+              <input type="time" class="form-control" id="exceptionOpens">
+              <input type="time" class="form-control" id="exceptionCloses">
+            </div>
+          </div>
+          <div class="col-md-6 d-none" id="reducedFields">
+            <label class="form-label text-sm">Capacity factor (0 &lt; f &lt;= 1)</label>
+            <input type="number" step="0.05" min="0.05" max="1" class="form-control" id="exceptionFactor" placeholder="0.75">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="createException()">Create Exception</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const WEEKLY = {{ weekly_json | tojson }};
+const EXCEPTIONS = {{ exceptions_json | tojson }};
+const DAYS = {{ schedule_days | tojson }};
+const EX_TITLES = {
+  special_hours:    {label: 'Special hours',      cls: 'bg-info-subtle text-info-emphasis border'},
+  reduced_capacity: {label: 'Reduced capacity',   cls: 'bg-warning-subtle text-warning-emphasis border'},
+  holiday:          {label: 'Holiday',            cls: 'bg-danger-subtle text-danger-emphasis border'},
+  emergency_closure:{label: 'Emergency closure',  cls: 'bg-danger-subtle text-danger-emphasis border'},
+  maintenance:      {label: 'Maintenance',        cls: 'bg-secondary-subtle text-secondary-emphasis border'},
+};
+
+function renderWeekly() {
+  const body = document.getElementById('weeklyBody');
+  body.innerHTML = '';
+  DAYS.forEach((name, dow) => {
+    const row = WEEKLY.find(r => r.day_of_week === dow) ||
+      {day_of_week: dow, is_closed: false, open_time: '09:00',
+       close_time: '17:00', slot_interval_minutes: 60, id: null};
+    const tr = document.createElement('tr');
+    tr.id = 'weekly-row-' + dow;
+    tr.innerHTML = `
+      <td><strong>${name}</strong>${row.id ? '' : ' <span class="badge bg-light text-secondary border text-xs">not published</span>'}</td>
+      <td><input class="form-check-input" type="checkbox" id="closed-${dow}" ${row.is_closed ? 'checked' : ''}
+                 onchange="toggleDayInputs(${dow})"></td>
+      <td><input type="time" class="form-control form-control-sm" id="open-${dow}" value="${row.open_time || ''}"></td>
+      <td><input type="time" class="form-control form-control-sm" id="close-${dow}" value="${row.close_time || ''}"></td>
+      <td><input type="number" min="1" max="1440" class="form-control form-control-sm" id="interval-${dow}"
+                 value="${row.slot_interval_minutes || 60}"></td>
+      <td class="text-end">
+        <button class="btn btn-sm btn-primary" onclick="saveWeekly(${dow})">Save</button>
+        <button class="btn btn-sm btn-ghost text-danger" onclick="deleteWeekly(${dow})"
+                ${row.id ? '' : 'disabled'}>Delete</button>
+      </td>`;
+    body.appendChild(tr);
+    toggleDayInputs(dow);
+  });
+}
+
+function toggleDayInputs(dow) {
+  const closed = document.getElementById('closed-' + dow).checked;
+  ['open-', 'close-', 'interval-'].forEach(pfx => {
+    const input = document.getElementById(pfx + dow);
+    input.disabled = closed;
+  });
+}
+
+async function saveWeekly(dow) {
+  const payload = {
+    day_of_week: dow,
+    is_closed: document.getElementById('closed-' + dow).checked,
+    open_time: document.getElementById('open-' + dow).value,
+    close_time: document.getElementById('close-' + dow).value,
+    slot_interval_minutes: document.getElementById('interval-' + dow).value,
+  };
+  try {
+    const resp = await fetch('/org/schedule/weekly/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Save failed');
+    location.reload();
+  } catch (e) { alert(e.message); }
+}
+
+async function deleteWeekly(dow) {
+  try {
+    const resp = await fetch('/org/schedule/weekly/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({day_of_week: dow}),
+    });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Delete failed');
+    location.reload();
+  } catch (e) { alert(e.message); }
+}
+
+function renderExceptions() {
+  const body = document.getElementById('exceptionBody');
+  body.innerHTML = '';
+  EXCEPTIONS.forEach(r => {
+    const t = EX_TITLES[r.exception_type] ||
+      {label: r.exception_type || 'unknown', cls: 'bg-light text-secondary border'};
+    let detail = '';
+    if (r.opens_at) detail = `${r.opens_at.slice(0,5)} – ${r.closes_at ? r.closes_at.slice(0,5) : ''}`;
+    if (r.capacity_factor !== null && r.capacity_factor !== undefined)
+      detail = (detail ? detail + ' · ' : '') + '×' + r.capacity_factor;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${r.exception_date}</strong></td>
+      <td><span class="badge ${t.cls}">${t.label}</span></td>
+      <td class="text-sm">${r.reason}</td>
+      <td class="text-sm">${detail || '<span class="text-muted">—</span>'}</td>
+      <td class="text-end">
+        <button class="btn btn-sm btn-ghost text-danger"
+                onclick="deleteException(${r.id})">Delete</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+  document.getElementById('exceptionEmpty').classList.toggle('d-none', EXCEPTIONS.length > 0);
+}
+
+document.getElementById('exceptionType').addEventListener('change', e => {
+  const isSpecial = e.target.value === 'special_hours';
+  const isReduced = e.target.value === 'reduced_capacity';
+  document.getElementById('specialHoursFields').classList.toggle('d-none', !isSpecial);
+  document.getElementById('reducedFields').classList.toggle('d-none', !isReduced);
+});
+
+async function createException() {
+  const errBox = document.getElementById('exceptionError');
+  errBox.classList.add('d-none');
+  const payload = {
+    exception_date: document.getElementById('exceptionDate').value,
+    exception_type: document.getElementById('exceptionType').value,
+    reason: document.getElementById('exceptionReason').value,
+    opens_at: document.getElementById('exceptionOpens').value,
+    closes_at: document.getElementById('exceptionCloses').value,
+    capacity_factor: document.getElementById('exceptionFactor').value,
+  };
+  try {
+    const resp = await fetch('/org/schedule/exception/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Create failed');
+    bootstrap.Modal.getInstance(document.getElementById('exceptionModal')).hide();
+    location.reload();
+  } catch (e) {
+    errBox.textContent = e.message;
+    errBox.classList.remove('d-none');
+  }
+}
+
+async function deleteException(id) {
+  try {
+    const resp = await fetch(`/org/schedule/exception/${id}/delete`, {method: 'POST'});
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || 'Delete failed');
+    location.reload();
+  } catch (e) { alert(e.message); }
+}
+
+renderWeekly();
+renderExceptions();
+</script>
+{% endblock %}

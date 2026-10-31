@@ -11,10 +11,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.services import audit_service, employee_service, rbac_service, session_service
+from app.services import audit_service, employee_service, rbac_service, session_service, shift_service
 from app.utils.jwt import create_access_token, decode_token
 from models.branch import Branch
+from models.counter import Counter, CounterStatus
+from models.counter_shift import CounterShift, CounterShiftStatus
 from models.employee import Employee
+from models.service import Service
+from sqlalchemy import and_, select
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -127,6 +131,43 @@ async def employee_dashboard_page(request: Request, db: AsyncSession = Depends(g
     roles = await rbac_service.get_employee_roles(db, employee.organization_id, employee.id)
     permissions = await rbac_service.get_employee_permissions(db, employee.id)
 
+    # Fetch organization counters and services
+    counters = (
+        await db.execute(
+            select(Counter).where(
+                and_(
+                    Counter.organization_id == employee.organization_id,
+                    Counter.status != CounterStatus.INACTIVE,
+                )
+            ).order_by(Counter.counter_number.asc())
+        )
+    ).scalars().all()
+
+    services = (
+        await db.execute(
+            select(Service).where(
+                and_(
+                    Service.organization_id == employee.organization_id,
+                    Service.is_active == True,
+                )
+            ).order_by(Service.name.asc())
+        )
+    ).scalars().all()
+
+    today = await shift_service._tenant_today(db, employee.organization_id)
+    today_shifts = (
+        await db.execute(
+            select(CounterShift).where(
+                and_(
+                    CounterShift.organization_id == employee.organization_id,
+                    CounterShift.employee_id == employee.id,
+                    CounterShift.shift_date == today,
+                )
+            ).order_by(CounterShift.created_at.desc())
+        )
+    ).scalars().all()
+    current_shift = today_shifts[0] if today_shifts else None
+
     return templates.TemplateResponse(
         "employee/dashboard.html",
         {
@@ -135,6 +176,9 @@ async def employee_dashboard_page(request: Request, db: AsyncSession = Depends(g
             "branch": branch,
             "roles": roles,
             "permissions": sorted(list(permissions)),
+            "counters": counters,
+            "services": services,
+            "current_shift": current_shift,
         },
     )
 
@@ -148,6 +192,34 @@ async def employee_logout(request: Request, db: AsyncSession = Depends(get_db)):
             session_id = payload.get("jti") or payload.get("session_id")
             if session_id:
                 await session_service.revoke_session(db, session_id)
+            # SHIFT-004: Logout does not silently close a live counter;
+            # pause active shift if operator logs out without closing
+            employee_id = payload.get("sub")
+            if employee_id:
+                emp = await db.get(Employee, int(employee_id))
+                if emp:
+                    today = await shift_service._tenant_today(db, emp.organization_id)
+                    active_shift = (
+                        await db.execute(
+                            select(CounterShift).where(
+                                and_(
+                                    CounterShift.organization_id == emp.organization_id,
+                                    CounterShift.employee_id == emp.id,
+                                    CounterShift.shift_date == today,
+                                    CounterShift.status == CounterShiftStatus.ACTIVE,
+                                )
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if active_shift:
+                        from datetime import datetime, timezone
+                        active_shift.status = CounterShiftStatus.PAUSED
+                        active_shift.paused_at = datetime.now(timezone.utc)
+                        active_shift.pause_reason = "Operator logged out without closing shift"
+                        counter = await db.get(Counter, active_shift.counter_id)
+                        if counter:
+                            counter.status = CounterStatus.BREAK
+                        await db.commit()
 
     resp = RedirectResponse("/employee/login", status_code=302)
     resp.delete_cookie("employee_token")

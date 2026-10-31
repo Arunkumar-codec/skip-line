@@ -36,6 +36,7 @@ from app.routers import (
     payments as payments_router,
     notifications as notifications_router,
     websocket as ws_router,
+    employee as employee_router,
     views_admin,
     views_org,
     views_user,
@@ -131,6 +132,7 @@ def create_app() -> FastAPI:
     app.include_router(tokens_router.router,        prefix="/tokens",        tags=["Tokens"])
     app.include_router(payments_router.router,      prefix="/payments",      tags=["Payments"])
     app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
+    app.include_router(employee_router.router,        prefix="/employee",      tags=["Employee Ops"])
     app.include_router(ws_router.router,            prefix="/ws",            tags=["WebSocket"])
     # HTML view routers
     app.include_router(views_admin.router,          prefix="/admin",         tags=["Admin UI"])

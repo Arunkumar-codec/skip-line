@@ -1,0 +1,603 @@
+{% extends "shared/base.html" %}
+{% block title %}Financial Management{% endblock %}
+{% block sidebar %}{% include "shared/admin_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-danger d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_admin.name[0].upper() if current_admin and current_admin.name else 'A' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_admin.name if current_admin else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_admin.email if current_admin else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/admin/change-password"><i class="bi bi-shield-lock me-2"></i>Change Password</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/admin/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Financial Management</h1>
+    <p class="page-subtitle">Payout review, risk-flag review, bank verification queue and ledger-derived financial figures (Phase 5)</p>
+  </div>
+</div>
+
+<!-- Platform summary cards (LED-004: all financial figures derive from the ledger / services) -->
+<div class="row g-3 mb-4 fade-in-up">
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon green" style="width:32px;height:32px"><i class="bi bi-cash-coin"></i></div>
+        <div class="stat-label">Payouts Disbursed</div>
+      </div>
+      <div class="fw-700 fs-5">{{ payout_counts.get('paid', 0) }}</div>
+      <span class="text-xs text-muted">of {{ payouts_total }} on record</span>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon amber" style="width:32px;height:32px"><i class="bi bi-pause-circle"></i></div>
+        <div class="stat-label">Payouts on Hold</div>
+      </div>
+      <div class="fw-700 fs-5">{{ payout_counts.get('held', 0) }}</div>
+      <span class="text-xs text-muted">{{ payout_counts.get('scheduled', 0) }} scheduled</span>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon red" style="width:32px;height:32px"><i class="bi bi-flag"></i></div>
+        <div class="stat-label">Open Risk Flags</div>
+      </div>
+      <div class="fw-700 fs-5">{{ flags_total }}</div>
+      <span class="text-xs text-muted">proportional review (FIN-004)</span>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon blue" style="width:32px;height:32px"><i class="bi bi-bank"></i></div>
+        <div class="stat-label">Bank Verifications</div>
+      </div>
+      <div class="fw-700 fs-5">{{ pending_accounts_total }}</div>
+      <span class="text-xs text-muted">awaiting review (FIN-002)</span>
+    </div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item">
+    <button class="nav-link active fw-600" data-bs-toggle="tab" data-bs-target="#tab-payouts" type="button">
+      <i class="bi bi-cash-coin me-1"></i>Payouts
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" data-bs-toggle="tab" data-bs-target="#tab-risks" type="button">
+      <i class="bi bi-flag me-1"></i>Risk Flags
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" data-bs-toggle="tab" data-bs-target="#tab-banks" type="button">
+      <i class="bi bi-bank me-1"></i>Bank Verifications
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button">
+      <i class="bi bi-journal-text me-1"></i>Ledger Overview
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" data-bs-toggle="tab" data-bs-target="#tab-payment-control" type="button">
+      <i class="bi bi-sliders me-1"></i>Payment Control
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- TAB 1: Payouts (FIN-001) -->
+  <div class="tab-pane fade show active" id="tab-payouts">
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h5 class="fw-700 mb-0">Payout Review Queue</h5>
+        <div class="d-flex gap-1">
+          <a class="btn btn-sm btn-outline-secondary {% if not payout_status_filter %}active{% endif %}"
+             href="/admin/finance">All</a>
+          <a class="btn btn-sm btn-outline-secondary {% if payout_status_filter == 'scheduled' %}active{% endif %}"
+             href="/admin/finance?status=scheduled">Scheduled</a>
+          <a class="btn btn-sm btn-outline-secondary {% if payout_status_filter == 'held' %}active{% endif %}"
+             href="/admin/finance?status=held">Held</a>
+          <a class="btn btn-sm btn-outline-secondary {% if payout_status_filter == 'paid' %}active{% endif %}"
+             href="/admin/finance?status=paid">Paid</a>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Organization</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Hold Reason</th>
+              <th>Created</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in payouts %}
+            <tr>
+              <td class="text-xs text-muted">#{{ p.id }}</td>
+              <td class="fw-600">{{ payout_org_names.get(p.organization_id, 'Org #' ~ p.organization_id) }}</td>
+              <td class="fw-700 text-success">₹{{ "%.2f"|format(p.amount) }} {{ p.currency }}</td>
+              <td>
+                <span class="badge-status badge-{{ 'completed' if p.status == 'paid' else ('in_progress' if p.status in ('held', 'processing') else 'waiting') }}">
+                  {{ p.status }}
+                </span>
+              </td>
+              <td class="text-xs text-muted">{{ p.hold_reason or '—' }}</td>
+              <td class="text-xs">{{ p.created_at.strftime('%d %b %Y, %H:%M') if p.created_at else '—' }}</td>
+              <td class="text-end">
+                {% if p.status == 'scheduled' %}
+                <button class="btn btn-outline-warning btn-xs" onclick="openHoldModal({{ p.id }})">
+                  <i class="bi bi-pause-fill me-1"></i>Hold
+                </button>
+                <button class="btn btn-outline-success btn-xs" onclick="disbursePayout({{ p.id }})">
+                  <i class="bi bi-send-check me-1"></i>Disburse
+                </button>
+                {% elif p.status == 'held' %}
+                <button class="btn btn-outline-primary btn-xs" onclick="releasePayout({{ p.id }})">
+                  <i class="bi bi-play-fill me-1"></i>Release
+                </button>
+                {% elif p.status == 'paid' %}
+                <span class="text-xs text-muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-5">
+                <i class="bi bi-cash-coin fs-2 d-block mb-2"></i>No payouts on record
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if payout_pages > 1 %}
+      <div class="d-flex justify-content-center py-3">
+        <nav><ul class="pagination pagination-sm mb-0">
+          {% for p in range(1, payout_pages+1) %}
+          <li class="page-item {% if p == page %}active{% endif %}">
+            <a class="page-link" href="/admin/finance?page={{ p }}{% if payout_status_filter %}&status={{ payout_status_filter }}{% endif %}">{{ p }}</a>
+          </li>
+          {% endfor %}
+        </ul></nav>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- TAB 2: Risk Flags (FIN-003..004) -->
+  <div class="tab-pane fade" id="tab-risks">
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-700 mb-0">Financial Risk Flags — Proportional Review</h5>
+        <span class="badge bg-warning text-dark">OPEN: {{ flags_total }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Organization</th>
+              <th>Risk Type</th>
+              <th>Severity</th>
+              <th>Description</th>
+              <th>Raised At</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in flags %}
+            <tr>
+              <td class="text-xs text-muted">#{{ f.id }}</td>
+              <td class="fw-600">{{ flag_org_names.get(f.organization_id, 'Org #' ~ f.organization_id) }}</td>
+              <td><span class="badge bg-light text-dark">{{ f.risk_type }}</span></td>
+              <td>
+                <span class="badge bg-{{ 'danger' if f.severity == 'high' else ('warning text-dark' if f.severity == 'medium' else 'secondary') }}">
+                  {{ f.severity }}
+                </span>
+              </td>
+              <td class="text-xs text-muted">{{ f.description }}</td>
+              <td class="text-xs">{{ f.created_at.strftime('%d %b %Y, %H:%M') if f.created_at else '—' }}</td>
+              <td class="text-end">
+                <button class="btn btn-outline-primary btn-xs" onclick="openResolveFlagModal({{ f.id }})">
+                  <i class="bi bi-check2-square me-1"></i>Review
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-5">
+                <i class="bi bi-shield-check fs-2 d-block mb-2"></i>No open risk flags — all clear
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Bank Verifications (FIN-002) -->
+  <div class="tab-pane fade" id="tab-banks">
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-700 mb-0">Bank Account Verification Queue</h5>
+        <span class="text-xs text-muted">72-hour security hold applies to changed bank details</span>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>Organization</th>
+              <th>Account Holder</th>
+              <th>Bank</th>
+              <th>IFSC</th>
+              <th>Account</th>
+              <th>Hold Until</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in pending_accounts %}
+            <tr>
+              <td class="fw-600">{{ payout_org_names.get(a.organization_id, 'Org #' ~ a.organization_id) }}</td>
+              <td>{{ a.account_holder_name }}</td>
+              <td>{{ a.bank_name }}</td>
+              <td class="text-xs">{{ a.ifsc_code }}</td>
+              <td class="text-xs">•••• {{ a.account_number[-4:] }}</td>
+              <td class="text-xs text-warning">{{ a.held_until.strftime('%d %b %Y, %H:%M UTC') if a.held_until else '—' }}</td>
+              <td class="text-end">
+                <button class="btn btn-outline-success btn-xs" onclick="verifyBankAccount({{ a.organization_id }})">
+                  <i class="bi bi-patch-check me-1"></i>Verify
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-5">
+                <i class="bi bi-patch-check fs-2 d-block mb-2"></i>No bank accounts awaiting verification
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: Ledger-derived Financial Overview (LED-004) -->
+  <div class="tab-pane fade" id="tab-overview">
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-700 mb-0">Organization Financial Overview</h5>
+        <span class="badge bg-info text-dark">Derived from ledger entries (LED-004)</span>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>Organization</th>
+              <th>Gross Revenue</th>
+              <th>Cash</th>
+              <th>Gateway</th>
+              <th>Refunds</th>
+              <th>Platform Fees</th>
+              <th>Net Revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for oid, t in payout_org_totals.items() %}
+            <tr>
+              <td class="fw-600">{{ payout_org_names.get(oid, 'Org #' ~ oid) }}</td>
+              <td class="fw-700 text-success">₹{{ "%.2f"|format(t.gross_revenue) }}</td>
+              <td>₹{{ "%.2f"|format(t.cash_collected) }}</td>
+              <td>₹{{ "%.2f"|format(t.gateway_collected) }}</td>
+              <td class="text-danger">₹{{ "%.2f"|format(t.refunds) }}</td>
+              <td class="text-warning">₹{{ "%.2f"|format(t.platform_fee) }}</td>
+              <td class="fw-700">₹{{ "%.2f"|format(t.net_revenue) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-5">
+                <i class="bi bi-journal-text fs-2 d-block mb-2"></i>No financial activity on record
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 5: Payment Control (FIN-001: method policy + paid-booking pause) -->
+  <div class="tab-pane fade" id="tab-payment-control">
+    <div class="content-card fade-in-up mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-700 mb-0">Organization Payment Method Policy</h5>
+        <span class="badge bg-secondary">Enforced at every payment acceptance point</span>
+      </div>
+      <p class="text-xs text-muted mb-3">Restrictions apply to online checkout (Razorpay) and all counter walk-in payments (cash, pay-at-counter, online, waivers). Free services are not affected. An unselected save stores "unrestricted".</p>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label fw-600 text-sm">Organization</label>
+          <select id="policyOrg" class="form-select" onchange="loadPolicy()">
+            <option value="">Select organization…</option>
+            {% for o in policy_orgs %}
+            <option value="{{ o[0] }}">{{ o[1] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label fw-600 text-sm">Permitted methods</label>
+          <div class="d-flex flex-wrap gap-3">
+            {% for m in ['razorpay', 'upi', 'cash', 'waived', 'free', 'pay_at_counter'] %}
+            <div class="form-check">
+              <input class="form-check-input policy-method" type="checkbox" id="pm-{{ m }}" value="{{ m }}">
+              <label class="form-check-label text-sm" for="pm-{{ m }}">{{ m }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm mt-3" onclick="savePolicy()"><i class="bi bi-save me-1"></i>Save Policy (audited)</button>
+    </div>
+
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <h5 class="fw-700 mb-0">Pause / Resume a Paid Booking</h5>
+        <span class="text-xs text-muted">Pause ≠ cancel — booked capacity stays consumed (Open Decision 16)</span>
+      </div>
+      <p class="text-xs text-muted mb-3">A paused booking drops to ON_HOLD with the operator's previous status remembered; station staff cannot call, progress or complete it from any endpoint until a finance admin resumes it.</p>
+      <div class="row g-2 align-items-end">
+        <div class="col-md-2">
+          <label class="form-label text-sm fw-600">Token ID</label>
+          <input id="holdTokenId" type="number" min="1" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label text-sm fw-600">Reason</label>
+          <input id="holdTokenReason" maxlength="500" class="form-control form-control-sm" placeholder="Why is this booking being paused / resumed?">
+        </div>
+        <div class="col-md-4 d-flex gap-2 pb-1">
+          <button class="btn btn-warning btn-sm" onclick="pausePaidBooking()"><i class="bi bi-pause-fill me-1"></i>Pause</button>
+          <button class="btn btn-success btn-sm" onclick="resumePaidBooking()"><i class="bi bi-play-fill me-1"></i>Resume</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hold Payout Modal -->
+<div class="modal fade" id="holdPayoutModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700"><i class="bi bi-pause-circle me-2"></i>Place Payout on Hold</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-xs text-muted">A mandatory reason is recorded with the hold for audit (FIN-001). The payout will return to <strong>scheduled</strong> when released.</p>
+        <label class="form-label fw-600 text-sm">Reason</label>
+        <textarea id="holdReason" class="form-control" rows="3" maxlength="500"
+                  placeholder="e.g. KYC document review pending"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-warning btn-sm" onclick="submitHold()"><i class="bi bi-pause-fill me-1"></i>Place Hold</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Resolve Risk Flag Modal -->
+<div class="modal fade" id="resolveFlagModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700"><i class="bi bi-check2-square me-2"></i>Review Risk Flag</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-xs text-muted">Risk flags trigger proportional review — they never automatically prove fraud or punish an account (FIN-004). The outcome and notes are audited.</p>
+        <label class="form-label fw-600 text-sm">Outcome</label>
+        <select id="flagOutcome" class="form-select mb-3">
+          <option value="resolved">Resolved — reviewed and cleared</option>
+          <option value="dismissed">Dismissed — not a financial risk</option>
+        </select>
+        <label class="form-label fw-600 text-sm">Resolution Notes</label>
+        <textarea id="flagNotes" class="form-control" rows="3" maxlength="500"
+                  placeholder="Evidence reviewed, action taken, reasons…"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitFlagResolution()"><i class="bi bi-check2 me-1"></i>Record Review</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let holdPayoutId = null;
+let resolveFlagId = null;
+
+function openHoldModal(payoutId) {
+  holdPayoutId = payoutId;
+  document.getElementById('holdReason').value = '';
+  new bootstrap.Modal(document.getElementById('holdPayoutModal')).show();
+}
+
+async function submitHold() {
+  const reason = document.getElementById('holdReason').value.trim();
+  if (!reason) { alert('A reason for the payout hold is mandatory'); return; }
+  try {
+    const res = await fetch(`/admin/payouts/${holdPayoutId}/hold`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Hold failed');
+    alert('Payout placed on hold');
+    location.reload();
+  } catch (err) { alert(err.message); }
+}
+
+async function releasePayout(payoutId) {
+  if (!confirm('Release this payout back to scheduled state?')) return;
+  try {
+    const res = await fetch(`/admin/payouts/${payoutId}/release`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Release failed');
+    alert('Payout released for disbursement');
+    location.reload();
+  } catch (err) { alert(err.message); }
+}
+
+async function disbursePayout(payoutId) {
+  if (!confirm('Disburse this payout? This action posts an immutable ledger entry and cannot be undone.')) return;
+  try {
+    const res = await fetch(`/admin/payouts/${payoutId}/disburse`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Disbursement failed');
+    alert('Payout disbursed successfully');
+    location.reload();
+  } catch (err) { alert(err.message); }
+}
+
+function openResolveFlagModal(flagId) {
+  resolveFlagId = flagId;
+  document.getElementById('flagOutcome').value = 'resolved';
+  document.getElementById('flagNotes').value = '';
+  new bootstrap.Modal(document.getElementById('resolveFlagModal')).show();
+}
+
+async function submitFlagResolution() {
+  const status = document.getElementById('flagOutcome').value;
+  const notes = document.getElementById('flagNotes').value.trim();
+  if (notes.length < 3) { alert('Please provide resolution notes describing the review'); return; }
+  try {
+    const res = await fetch(`/admin/risk-flags/${resolveFlagId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: status, resolution_notes: notes })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Resolution failed');
+    alert('Risk flag review recorded');
+    location.reload();
+  } catch (err) { alert(err.message); }
+}
+
+async function verifyBankAccount(orgId) {
+  if (!confirm('Verify this organization bank account and lift the security hold?')) return;
+  try {
+    const res = await fetch(`/admin/bank-accounts/${orgId}/verify`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Verification failed');
+    alert('Bank account verified; security hold lifted');
+    location.reload();
+  } catch (err) { alert(err.message); }
+}
+
+// ── Payment Control (FIN-001) ────────────────────────────────────────────────
+const POLICY_METHODS = ['razorpay', 'upi', 'cash', 'waived', 'free', 'pay_at_counter'];
+
+async function loadPolicy() {
+  const orgId = document.getElementById('policyOrg').value;
+  POLICY_METHODS.forEach(m => {
+    const cb = document.getElementById('pm-' + m);
+    if (cb) cb.checked = false;
+  });
+  if (!orgId) return;
+  try {
+    const res = await fetch(`/admin/api/organizations/${orgId}/payment-policy`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Policy load failed');
+    const methods = (data.data || {}).allowed_payment_methods;
+    if (Array.isArray(methods)) {
+      methods.forEach(m => {
+        const cb = document.getElementById('pm-' + m);
+        if (cb) cb.checked = true;
+      });
+    }
+  } catch (err) { alert(err.message); }
+}
+
+async function savePolicy() {
+  const orgId = document.getElementById('policyOrg').value;
+  if (!orgId) { alert('Select an organization first'); return; }
+  const selected = POLICY_METHODS.filter(m => document.getElementById('pm-' + m).checked);
+  if (!confirm('Save this payment method policy for the organization? (an audited event is recorded)')) return;
+  try {
+    const res = await fetch(`/admin/api/organizations/${orgId}/payment-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allowed_payment_methods: selected.length ? selected : null })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Policy save failed');
+    alert(selected.length
+      ? 'Policy saved: permitted methods = ' + selected.join(', ')
+      : 'Policy saved: all payment methods permitted (unrestricted)');
+  } catch (err) { alert(err.message); }
+}
+
+async function pausePaidBooking() {
+  const tokenId = document.getElementById('holdTokenId').value;
+  const reason = document.getElementById('holdTokenReason').value.trim();
+  if (!tokenId) { alert('Enter the token ID to pause'); return; }
+  if (reason.length < 3) { alert('A reason (at least 3 characters) is required to pause a paid booking'); return; }
+  if (!confirm('Pause this paid booking? Operators will not be able to call/progress/complete it until resumed.')) return;
+  try {
+    const res = await fetch(`/admin/tokens/${tokenId}/pause`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Pause failed');
+    alert('Paid booking paused (token moved to ON_HOLD)');
+  } catch (err) { alert(err.message); }
+}
+
+async function resumePaidBooking() {
+  const tokenId = document.getElementById('holdTokenId').value;
+  const reason = document.getElementById('holdTokenReason').value.trim();
+  if (!tokenId) { alert('Enter the token ID to resume'); return; }
+  if (reason.length < 3) { alert('A reason (at least 3 characters) is required to resume a paid booking'); return; }
+  if (!confirm('Resume this paid booking? The operator\u2019s previous queue status is restored.')) return;
+  try {
+    const res = await fetch(`/admin/tokens/${tokenId}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Resume failed');
+    alert('Paid booking resumed');
+  } catch (err) { alert(err.message); }
+}
+</script>
+
+{% endblock %}

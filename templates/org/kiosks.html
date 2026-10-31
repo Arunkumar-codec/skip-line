@@ -1,0 +1,167 @@
+{% extends "shared/base.html" %}
+{% block title %}Kiosk Devices — SkipLine{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Self-Service Kiosk Devices</h1>
+    <p class="page-subtitle">Manage registered physical kiosk devices, pairing PINs, and access control (KSK-001..006)</p>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary btn-sm" onclick="openPairModal()">
+      <i class="bi bi-plus-lg me-1"></i>Pair New Kiosk
+    </button>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="p-3 border-bottom d-flex align-items-center justify-content-between">
+    <h5 class="fw-700 mb-0">Registered Kiosks</h5>
+    <button class="btn btn-outline-secondary btn-sm" onclick="loadKiosks()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" style="font-size:.85rem">
+      <thead class="table-light text-xs text-muted">
+        <tr>
+          <th>ID</th>
+          <th>Device Name</th>
+          <th>Device Code</th>
+          <th>Branch</th>
+          <th>Status</th>
+          <th>Last Heartbeat</th>
+          <th>Registered At</th>
+          <th class="text-end">Action</th>
+        </tr>
+      </thead>
+      <tbody id="kiosksTableBody">
+        <tr><td colspan="8" class="text-center text-muted py-4">Loading kiosks...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Pair Kiosk Modal (Open Decision 7) -->
+<div class="modal fade" id="pairKioskModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700">Pair New Kiosk Device (KSK-001)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-xs text-muted mb-3">
+          Enter the 6-digit pairing PIN displayed on the kiosk tablet/screen to authorize and bind it to this organization.
+        </p>
+        <div class="mb-3">
+          <label class="form-label text-xs fw-600">6-Digit Pairing PIN <span class="text-danger">*</span></label>
+          <input type="text" class="form-control text-center fw-800 fs-4 letter-spacing-2" id="pairingPinInput" maxlength="6" placeholder="000000" required/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label text-xs fw-600">Device Friendly Name</label>
+          <input type="text" class="form-control form-control-sm" id="deviceNameInput" placeholder="e.g. Entrance Kiosk A"/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label text-xs fw-600">Assigned Branch Location</label>
+          <select class="form-select form-select-sm" id="kioskBranchSelect">
+            <option value="">Select branch...</option>
+            {% for b in branches %}
+              <option value="{{ b.id }}">{{ b.name }} ({{ b.branch_code }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="submitPairConfirm()">
+          <i class="bi bi-link-45deg me-1"></i>Authorize & Pair Device
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function loadKiosks() {
+  try {
+    const res = await apiRequest('/org/kiosks', 'GET');
+    const kiosks = res.data || [];
+    renderKiosks(kiosks);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+function renderKiosks(kiosks) {
+  const tbody = document.getElementById('kiosksTableBody');
+  if (kiosks.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No paired kiosk devices found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = kiosks.map(k => {
+    const statusBadge = k.is_active
+      ? '<span class="badge bg-success-subtle text-success border border-success-subtle">ACTIVE</span>'
+      : '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">REVOKED</span>';
+    const heartbeat = k.last_heartbeat_at ? new Date(k.last_heartbeat_at).toLocaleTimeString() : 'Never';
+    return `
+      <tr>
+        <td class="fw-700">#${k.id}</td>
+        <td class="fw-600">${k.device_name}</td>
+        <td><code>${k.device_code}</code></td>
+        <td>${k.branch_id ? '#' + k.branch_id : 'All Branches'}</td>
+        <td>${statusBadge}</td>
+        <td>${heartbeat}</td>
+        <td>${new Date(k.created_at).toLocaleDateString()}</td>
+        <td class="text-end">
+          ${k.is_active ? `<button class="btn btn-outline-danger btn-xs" onclick="revokeKiosk(${k.id})">Revoke</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openPairModal() {
+  document.getElementById('pairingPinInput').value = '';
+  document.getElementById('deviceNameInput').value = '';
+  new bootstrap.Modal(document.getElementById('pairKioskModal')).show();
+}
+
+async function submitPairConfirm() {
+  const pin = document.getElementById('pairingPinInput').value.trim();
+  const name = document.getElementById('deviceNameInput').value.trim();
+  const branchId = document.getElementById('kioskBranchSelect').value;
+  if (!pin || pin.length < 6) {
+    showToast('Enter a valid 6-digit pairing PIN', 'warning');
+    return;
+  }
+  try {
+    await apiRequest('/org/kiosks/pair-confirm', 'POST', {
+      pairing_code: pin,
+      device_name: name || undefined,
+      branch_id: branchId ? parseInt(branchId) : undefined
+    });
+    showToast('Kiosk device paired successfully!', 'success');
+    bootstrap.Modal.getInstance(document.getElementById('pairKioskModal')).hide();
+    loadKiosks();
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function revokeKiosk(kioskId) {
+  if (!confirm('Are you sure you want to revoke this kiosk device credential?')) return;
+  try {
+    await apiRequest(`/org/kiosks/${kioskId}/revoke`, 'POST', {});
+    showToast('Kiosk access revoked', 'warning');
+    loadKiosks();
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadKiosks);
+</script>
+{% endblock %}
+

@@ -45,6 +45,14 @@ DEFAULT_PERMISSIONS = [
     # Customer Identity Verification (KYC)
     {"code": "identity:read", "name": "View Identity Documents", "module": "identity", "description": "View customer KYC documents and verification status"},
     {"code": "identity:review", "name": "Review Identity Documents", "module": "identity", "description": "Approve or reject customer identity submissions"},
+    # Counter Shifts (SHIFT-002): daily shift requests approval - assigned to an
+    # employee makes them an "explicitly delegated manager" for shift decisions;
+    # organization principals always retain the authority themselves.
+    {"code": "shifts:approve", "name": "Approve Counter Shifts", "module": "shifts", "description": "Approve, reject or correct daily counter shift requests"},
+    # Finance & Ledgering (Phase 5: LED-001..004, CASH-001..003, FIN-001..002)
+    {"code": "finance:read", "name": "View Financials & Ledger", "module": "finance", "description": "Inspect ledger journal, revenue breakdown and settlements"},
+    {"code": "finance:manage", "name": "Manage Financials & Payouts", "module": "finance", "description": "Manage payouts, refunds and bank account verification"},
+    {"code": "cash:reconcile", "name": "Reconcile Cash & Shifts", "module": "finance", "description": "Verify cash drawer counts and sign off shift discrepancies"},
     # Reports & Audit
     {"code": "reports:read", "name": "View Reports", "module": "reports", "description": "View analytics and daily performance reports"},
     {"code": "audit:read", "name": "View Audit Logs", "module": "audit", "description": "Inspect tenant security and administrative logs"},
@@ -70,6 +78,7 @@ DEFAULT_ROLES = [
             "queue:transfer", "services:manage", "counters:manage",
             "catalogue:read", "catalogue:manage", "forms:read", "forms:manage",
             "identity:read", "identity:review", "reports:read",
+            "finance:read", "cash:reconcile",
         ],
     },
     {

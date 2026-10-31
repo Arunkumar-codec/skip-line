@@ -7,9 +7,8 @@ Registration creates a pending record; admin approval enables login.
 
 import enum
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import DateTime
 
 from app.database import Base
 from models.mixins import TimestampMixin
@@ -54,6 +53,22 @@ class Organization(Base, TimestampMixin):
     logo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # IANA timezone identifier for schedule display (SCH-009).
+    # All timestamps are stored in UTC; this zone renders local times.
+    # Default chosen per OPEN_DECISIONS Decision 12.
+    timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="Asia/Kolkata", server_default="Asia/Kolkata"
+    )
+
+    # FIN-001: Permitted payment methods for this organization (policy).
+    # Nullable JSON array of PaymentMethod enum values; NULL = unrestricted
+    # (backward compatible — no policy configured means every method is
+    # accepted). Admin-managed via /admin API; enforced at every payment
+    # acceptance point (online initiate + counter walk-in).
+    allowed_payment_methods: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
 
     # Admin who approved/rejected this org
     approved_by_admin_id: Mapped[int | None] = mapped_column(

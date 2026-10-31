@@ -7,8 +7,9 @@ to /api/* so that the HTML view router always wins the first-match.
 """
 
 import math
+from datetime import date
 from typing import Optional
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -86,13 +87,32 @@ async def search_orgs(
     org_type: str = None,
     city: str = None,
     state: str = None,
+    service_id: int = None,
+    pincode: str = None,
+    slot_date: date = None,
+    lat: float = Query(default=None, ge=-90, le=90),
+    lng: float = Query(default=None, ge=-180, le=180),
+    radius_km: float = Query(default=None, gt=0),
     page: int = 1,
     per_page: int = 20,
     db: AsyncSession = Depends(get_db),
 ):
-    orgs, total = await user_service.search_organizations(
-        db, query=q, org_type=org_type, city=city, state=state, page=page, per_page=per_page
-    )
+    """
+    Approved-organization discovery (SRCH-001/002).
+    Base filters: q / org_type / city / state. Phase 3 filters:
+    service_id (org offers this active service), pincode (active branch at
+    this PIN), slot_date (slot capacity remaining that date), and
+    lat+lng [+radius_km] distance search (nearest-first when coordinates
+    are given; radius excludes organizations without geocoded branches).
+    """
+    try:
+        orgs, total = await user_service.search_organizations(
+            db, query=q, org_type=org_type, city=city, state=state,
+            service_id=service_id, pincode=pincode, slot_date=slot_date,
+            lat=lat, lng=lng, radius_km=radius_km, page=page, per_page=per_page,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return PaginatedResponse(
         total=total, page=page, per_page=per_page,
         pages=math.ceil(total / per_page) if total else 1,
@@ -117,6 +137,9 @@ async def book_token(
             user_id=user.id,
             sub_service_ids=body.sub_service_ids,
             form_answers=body.form_answers,
+            slot_id=body.slot_id,
+            # Server-side issuing channel (SCH-004): never client input.
+            booking_source="online",
         )
         await notification_service.notify_token_created(db, token, user)
         await db.commit()

@@ -7,9 +7,10 @@ to /api/* so that the HTML view router always wins the first-match.
 """
 
 import math
+from datetime import date
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +43,45 @@ from app.schemas.form import (
 from app.schemas.identity import IdentityReviewRequest, UserIdentityRead
 from app.schemas.organization import OrgRead, OrgRegisterRequest, OrgUpdateRequest
 from app.schemas.rbac import PermissionRead, RoleAssignmentRead, RoleAssignRequest, RoleRead
+from app.schemas.shift import (
+    CounterShiftAdjustRequest,
+    CounterShiftDecisionRequest,
+    CounterShiftRead,
+    CounterShiftReconcileRequest,
+)
+from app.schemas.kiosk import KioskDeviceRead, KioskPairConfirmRequest
+from app.schemas.finance import (
+    CashSessionCloseRequest,
+    CashSessionRead,
+    LedgerEntryRead,
+    LedgerTotalsRead,
+    OrgBankAccountRead,
+    OrgBankAccountUpdate,
+    PayoutRead,
+    RefundRead,
+)
+from app.services import (
+    bank_account_service,
+    cash_service,
+    ledger_service,
+    payout_service,
+    refund_service,
+)
+from app.schemas.schedule import (
+    CapacityRuleCreate,
+    CapacityRuleRead,
+    CapacityRuleUpdate,
+    ScheduleChangeDecisionIn,
+    ScheduleChangeDecisionsRequest,
+    ScheduleChangePreviewRead,
+    ScheduleChangePreviewRequest,
+    ScheduleExceptionCreate,
+    ScheduleExceptionRead,
+    ScheduleExceptionUpdate,
+    WeeklyScheduleCreate,
+    WeeklyScheduleRead,
+    WeeklyScheduleUpdate,
+)
 from app.schemas.service import ServiceCreate, ServiceRead, ServiceUpdate
 from app.schemas.token import TokenActionRequest, TokenRead
 from app.services import (
@@ -52,14 +92,35 @@ from app.services import (
     employee_service,
     form_service,
     identity_service,
+    kiosk_service,
     org_service,
     rbac_service,
+    schedule_change_service,
+    schedule_service,
+    shift_service,
     token_service,
 )
 from app.websocket.manager import ws_manager
 from models.organization import Organization
+from models.weekly_schedule import ScheduleScopeLevel
 
 router = APIRouter()
+
+
+def _schedule_error_status(message: str) -> int:
+    """404 for unknown/cross-tenant targets, 400 for validation conflicts."""
+    return 404 if "not found" in message.lower() else 400
+
+
+def _shift_decision_error_status(e: ValueError) -> HTTPException:
+    """Shift decisions: 404 for unknown/cross-tenant rows, 409 for
+    state conflicts, otherwise 400 (validation)."""
+    message = str(e)
+    if "not found" in message.lower():
+        return HTTPException(status_code=404, detail=message)
+    if "only a pending" in message.lower():
+        return HTTPException(status_code=409, detail=message)
+    return HTTPException(status_code=400, detail=message)
 
 
 # ── Registration (public) ─────────────────────────────────────────────────────
@@ -903,3 +964,886 @@ async def get_identity_document_org_api(
     ext = Path(identity.document_path).suffix.lower()
     media_type = "application/pdf" if ext == ".pdf" else f"image/{ext.replace('.', '')}"
     return FileResponse(identity.document_path, media_type=media_type)
+
+
+# ── Phase 3: Schedule administration (weekly hours, exceptions, capacity) ─────
+# All routes require an authenticated, approved organization principal and
+# enforce strict tenant isolation in the service layer (SCH-001/002/003/004).
+# Configuration rows only — generated time_slots and existing bookings are
+# never modified here (OPEN_DECISIONS "Decision 17" — Decision 11 workflow).
+
+# ── Weekly schedules ──────────────────────────────────────────────────────────
+
+@router.get("/api/schedules/weekly", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def list_weekly_schedules_api(
+    scope_level: Optional[ScheduleScopeLevel] = None,
+    scope_id: Optional[int] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await schedule_service.list_weekly_schedules(
+        db, org.id, scope_level=scope_level, scope_id=scope_id
+    )
+    return APIResponse(data=[WeeklyScheduleRead.model_validate(r) for r in rows])
+
+
+@router.post("/schedules/weekly", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def create_weekly_schedule_api(
+    body: WeeklyScheduleCreate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.create_weekly_schedule(db, org.id, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=_schedule_error_status(str(e)), detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.weekly.create",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="weekly_schedule",
+        target_id=str(row.id),
+        details={"scope_level": str(row.scope_level), "scope_id": row.scope_id,
+                 "day_of_week": row.day_of_week, "is_closed": row.is_closed},
+    )
+    return APIResponse(message="Weekly schedule created", data=WeeklyScheduleRead.model_validate(row))
+
+
+@router.get("/schedules/weekly/{schedule_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_weekly_schedule_api(
+    schedule_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.get_weekly_schedule(db, org.id, schedule_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return APIResponse(data=WeeklyScheduleRead.model_validate(row))
+
+
+@router.put("/schedules/weekly/{schedule_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def update_weekly_schedule_api(
+    schedule_id: int,
+    body: WeeklyScheduleUpdate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.update_weekly_schedule(
+            db, org.id, schedule_id, body.model_dump(exclude_none=True)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=_schedule_error_status(str(e)), detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.weekly.update",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="weekly_schedule",
+        target_id=str(row.id),
+        details={"scope_level": str(row.scope_level), "scope_id": row.scope_id,
+                 "day_of_week": row.day_of_week, "is_closed": row.is_closed},
+    )
+    return APIResponse(message="Weekly schedule updated", data=WeeklyScheduleRead.model_validate(row))
+
+
+@router.delete("/schedules/weekly/{schedule_id}", response_model=MessageResponse, dependencies=[Depends(get_current_org)])
+async def delete_weekly_schedule_api(
+    schedule_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await schedule_service.delete_weekly_schedule(db, org.id, schedule_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.weekly.delete",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="weekly_schedule",
+        target_id=str(schedule_id),
+    )
+    return MessageResponse(message="Weekly schedule deleted")
+
+
+# ── Schedule exceptions ───────────────────────────────────────────────────────
+
+@router.get("/api/schedules/exceptions", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def list_schedule_exceptions_api(
+    scope_level: Optional[ScheduleScopeLevel] = None,
+    scope_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await schedule_service.list_schedule_exceptions(
+        db, org.id, scope_level=scope_level, scope_id=scope_id,
+        date_from=date_from, date_to=date_to,
+    )
+    return APIResponse(data=[ScheduleExceptionRead.model_validate(r) for r in rows])
+
+
+@router.post("/schedules/exceptions", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def create_schedule_exception_api(
+    body: ScheduleExceptionCreate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.create_schedule_exception(db, org.id, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=_schedule_error_status(str(e)), detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.exception.create",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="schedule_exception",
+        target_id=str(row.id),
+        details={"scope_level": str(row.scope_level), "scope_id": row.scope_id,
+                 "exception_date": row.exception_date.isoformat(),
+                 "exception_type": str(row.exception_type)},
+    )
+    return APIResponse(message="Schedule exception created", data=ScheduleExceptionRead.model_validate(row))
+
+
+@router.get("/schedules/exceptions/{exception_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_schedule_exception_api(
+    exception_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.get_schedule_exception(db, org.id, exception_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return APIResponse(data=ScheduleExceptionRead.model_validate(row))
+
+
+@router.put("/schedules/exceptions/{exception_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def update_schedule_exception_api(
+    exception_id: int,
+    body: ScheduleExceptionUpdate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.update_schedule_exception(
+            db, org.id, exception_id, body.model_dump(exclude_none=True)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=_schedule_error_status(str(e)), detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.exception.update",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="schedule_exception",
+        target_id=str(row.id),
+        details={"exception_date": row.exception_date.isoformat(),
+                 "exception_type": str(row.exception_type), "is_active": row.is_active},
+    )
+    return APIResponse(message="Schedule exception updated", data=ScheduleExceptionRead.model_validate(row))
+
+
+@router.delete("/schedules/exceptions/{exception_id}", response_model=MessageResponse, dependencies=[Depends(get_current_org)])
+async def delete_schedule_exception_api(
+    exception_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await schedule_service.delete_schedule_exception(db, org.id, exception_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.exception.delete",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="schedule_exception",
+        target_id=str(exception_id),
+    )
+    return MessageResponse(message="Schedule exception deleted")
+
+
+# ── Capacity rules ────────────────────────────────────────────────────────────
+
+@router.get("/api/schedules/capacity-rules", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def list_capacity_rules_api(
+    scope_level: Optional[ScheduleScopeLevel] = None,
+    scope_id: Optional[int] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.capacity_rule import CapacityLimitType
+    rows = await schedule_service.list_capacity_rules(
+        db, org.id, scope_level=scope_level, scope_id=scope_id
+    )
+    return APIResponse(data=[CapacityRuleRead.model_validate(r) for r in rows])
+
+
+@router.post("/schedules/capacity-rules", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def create_capacity_rule_api(
+    body: CapacityRuleCreate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.create_capacity_rule(db, org.id, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=_schedule_error_status(str(e)), detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.capacity_rule.create",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="capacity_rule",
+        target_id=str(row.id),
+        details={"scope_level": str(row.scope_level), "scope_id": row.scope_id,
+                 "limit_type": str(row.limit_type), "booking_source": str(row.booking_source),
+                 "max_count": row.max_count},
+    )
+    return APIResponse(message="Capacity rule created", data=CapacityRuleRead.model_validate(row))
+
+
+@router.get("/schedules/capacity-rules/{rule_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_capacity_rule_api(
+    rule_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.get_capacity_rule(db, org.id, rule_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return APIResponse(data=CapacityRuleRead.model_validate(row))
+
+
+@router.put("/schedules/capacity-rules/{rule_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def update_capacity_rule_api(
+    rule_id: int,
+    body: CapacityRuleUpdate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_service.update_capacity_rule(
+            db, org.id, rule_id, body.model_dump(exclude_none=True)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=_schedule_error_status(str(e)), detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.capacity_rule.update",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="capacity_rule",
+        target_id=str(row.id),
+        details={"limit_type": str(row.limit_type), "booking_source": str(row.booking_source),
+                 "max_count": row.max_count},
+    )
+    return APIResponse(message="Capacity rule updated", data=CapacityRuleRead.model_validate(row))
+
+
+@router.delete("/schedules/capacity-rules/{rule_id}", response_model=MessageResponse, dependencies=[Depends(get_current_org)])
+async def delete_capacity_rule_api(
+    rule_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await schedule_service.delete_capacity_rule(db, org.id, rule_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.capacity_rule.delete",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="capacity_rule",
+        target_id=str(rule_id),
+    )
+    return MessageResponse(message="Capacity rule deleted")
+
+
+# ── Schedule-change impact workflow (SCH-007 / OPEN_DECISIONS Decision 11) ────
+# Preview → resolve → confirm. Configuration is never applied without an
+# explicit, audited confirmation; generated time_slots and confirmed bookings
+# are never silently rewritten (Decision 17), and confirmation never releases
+# slot capacity (Decision 16 — reschedule decisions are recorded but blocked).
+
+@router.post("/schedules/changes/preview", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def create_schedule_change_preview_api(
+    body: ScheduleChangePreviewRequest,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_change_service.create_preview(
+            db, org, body.model_dump(), created_by=org.email
+        )
+    except ValueError as e:
+        raise schedule_change_service.schedule_change_http_error(e)
+    await audit_service.log_audit_event(
+        db,
+        action="schedule.change.preview",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="schedule_change_preview",
+        target_id=str(row.id),
+        details={"entity": row.entity.value if hasattr(row.entity, "value") else str(row.entity),
+                 "edit_type": row.edit_type,
+                 "affected_bookings": row.impact.get("summary", {}).get("bookings_affected", 0)},
+    )
+    return APIResponse(
+        message="Schedule change preview created",
+        data=ScheduleChangePreviewRead.model_validate(row),
+    )
+
+
+@router.get("/api/schedules/changes", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def list_schedule_change_previews_api(
+    status: Optional[str] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        rows = await schedule_change_service.list_previews(db, org.id, status_filter=status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unknown preview status filter")
+    return APIResponse(data=[ScheduleChangePreviewRead.model_validate(r) for r in rows])
+
+
+@router.get("/schedules/changes/{preview_id}", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_schedule_change_preview_api(
+    preview_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_change_service.get_preview(db, org.id, preview_id)
+    except ValueError as e:
+        raise schedule_change_service.schedule_change_http_error(e)
+    return APIResponse(data=ScheduleChangePreviewRead.model_validate(row))
+
+
+@router.post("/schedules/changes/{preview_id}/resolve", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def resolve_schedule_change_api(
+    preview_id: int,
+    body: ScheduleChangeDecisionsRequest,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_change_service.record_decisions(
+            db, org.id, preview_id,
+            {token_id: d.model_dump(exclude_none=True) for token_id, d in body.decisions.items()},
+            resolved_by=org.email,
+        )
+    except ValueError as e:
+        raise schedule_change_service.schedule_change_http_error(e)
+    return APIResponse(message="Decisions recorded", data=ScheduleChangePreviewRead.model_validate(row))
+
+
+@router.post("/schedules/changes/{preview_id}/confirm", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def confirm_schedule_change_api(
+    preview_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_change_service.confirm_preview(
+            db, org.id, preview_id, confirmed_by=org.email
+        )
+    except ValueError as e:
+        raise schedule_change_service.schedule_change_http_error(e)
+    return APIResponse(message="Schedule change confirmed and applied", data=ScheduleChangePreviewRead.model_validate(row))
+
+
+@router.post("/schedules/changes/{preview_id}/reject", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def reject_schedule_change_api(
+    preview_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await schedule_change_service.reject_preview(
+            db, org.id, preview_id, rejected_by=org.email
+        )
+    except ValueError as e:
+        raise schedule_change_service.schedule_change_http_error(e)
+    return APIResponse(message="Schedule change rejected", data=ScheduleChangePreviewRead.model_validate(row))
+
+
+# ── Phase 4: Daily counter shifts (SHIFT-001/002) ─────────────────────────────
+# The organization head (or an employee explicitly delegated via the RBAC
+# `shifts:approve` permission) views pending requests and approves/rejects
+# with reason, approved services, optional daily period and payment
+# permission. Decisions are audit-logged; cross-tenant rows are not found.
+
+@router.get("/api/shifts", response_model=APIResponse)
+@router.get("/shifts")
+async def list_counter_shifts_api(
+    request: Request,
+    status: Optional[str] = None,
+    shift_date: Optional[date] = None,
+    principal: AuthenticatedPrincipal = Depends(require_permission("shifts:approve")),
+    db: AsyncSession = Depends(get_db),
+):
+    accept = request.headers.get("accept", "")
+    auth = request.headers.get("authorization", "")
+    if "text/html" in accept and not auth:
+        from fastapi.templating import Jinja2Templates
+        templates = Jinja2Templates(directory="templates")
+        from app.routers.views_org import _get_org_or_redirect
+        org, redir = await _get_org_or_redirect(request, db)
+        if redir:
+            return redir
+        return templates.TemplateResponse(
+            "org/shifts.html",
+            {"request": request, "current_org": org, "active_page": "shifts"},
+        )
+
+    shifts = await shift_service.list_org_shifts(
+        db, principal.organization_id, status_filter=status, shift_date=shift_date
+    )
+    return APIResponse(data=[CounterShiftRead.model_validate(s) for s in shifts])
+
+
+@router.post("/shifts/{shift_id}/decision", response_model=APIResponse)
+async def decide_counter_shift_api(
+    shift_id: int,
+    body: CounterShiftDecisionRequest,
+    principal: AuthenticatedPrincipal = Depends(require_permission("shifts:approve")),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        shift = await shift_service.decide_shift_request(
+            db,
+            principal.organization_id,
+            shift_id,
+            decision=body.decision,
+            reason=body.reason,
+            decided_by_type=principal.role,
+            decided_by_id=principal.id,
+            approved_services=body.approved_services,
+            approved_period_start=body.approved_period_start,
+            approved_period_end=body.approved_period_end,
+            payment_permitted=body.payment_permitted,
+        )
+    except ValueError as e:
+        raise _shift_decision_error_status(e)
+    await audit_service.log_audit_event(
+        db,
+        action=f"shift.{body.decision}",
+        actor_type=principal.role,
+        actor_id=principal.id,
+        actor_email=principal.email,
+        organization_id=principal.organization_id,
+        target_type="counter_shift",
+        target_id=str(shift.id),
+        details={
+            "status": shift.status,
+            "approved_services": shift.approved_services,
+            "payment_permitted": shift.payment_permitted,
+        },
+    )
+    return APIResponse(
+        message=f"Shift request {body.decision}d",
+        data=CounterShiftRead.model_validate(shift),
+    )
+
+
+@router.post("/shifts/{shift_id}/reconcile", response_model=APIResponse)
+async def reconcile_counter_shift_api(
+    shift_id: int,
+    body: CounterShiftReconcileRequest,
+    principal: AuthenticatedPrincipal = Depends(require_permission("shifts:approve")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Head review of shift closing report (SHIFT-006): approve, request correction, record discrepancy, or escalate."""
+    try:
+        shift = await shift_service.reconcile_shift(
+            db,
+            principal.organization_id,
+            shift_id,
+            action=body.action,
+            notes=body.notes,
+            decided_by_type=principal.role,
+            decided_by_id=principal.id,
+        )
+    except ValueError as e:
+        raise _shift_decision_error_status(e)
+    await audit_service.log_audit_event(
+        db,
+        action=f"shift.reconcile.{body.action}",
+        actor_type=principal.role,
+        actor_id=principal.id,
+        actor_email=principal.email,
+        organization_id=principal.organization_id,
+        target_type="counter_shift",
+        target_id=str(shift.id),
+        details={"reconciliation_status": shift.reconciliation_status, "action": body.action},
+    )
+    return APIResponse(
+        message=f"Shift reconciliation {body.action} processed",
+        data=CounterShiftRead.model_validate(shift),
+    )
+
+
+@router.post("/shifts/{shift_id}/adjust", response_model=APIResponse)
+async def adjust_counter_shift_api(
+    shift_id: int,
+    body: CounterShiftAdjustRequest,
+    principal: AuthenticatedPrincipal = Depends(require_permission("shifts:approve")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Authorized adjustment to a closed reconciled shift (SHIFT-006)."""
+    try:
+        shift = await shift_service.adjust_reconciled_shift(
+            db,
+            principal.organization_id,
+            shift_id,
+            adjustment_amount=body.adjustment_amount,
+            reason=body.reason,
+            decided_by_type=principal.role,
+            decided_by_id=principal.id,
+        )
+    except ValueError as e:
+        raise _shift_decision_error_status(e)
+    await audit_service.log_audit_event(
+        db,
+        action="shift.adjust",
+        actor_type=principal.role,
+        actor_id=principal.id,
+        actor_email=principal.email,
+        organization_id=principal.organization_id,
+        target_type="counter_shift",
+        target_id=str(shift.id),
+        details={"adjustment_amount": str(body.adjustment_amount), "reason": body.reason},
+    )
+    return APIResponse(
+        message="Shift adjustment recorded",
+        data=CounterShiftRead.model_validate(shift),
+    )
+
+
+# ── Phase 4: Kiosk Device Management (KSK-001..006) ───────────────────────────
+
+
+@router.get("/api/kiosks", response_model=APIResponse)
+@router.get("/kiosks")
+async def list_kiosks_api(
+    request: Request,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    accept = request.headers.get("accept", "")
+    auth = request.headers.get("authorization", "")
+    if "text/html" in accept and not auth:
+        from fastapi.templating import Jinja2Templates
+        from app.services import branch_service
+        templates = Jinja2Templates(directory="templates")
+        branches = await branch_service.list_branches(db, org.id)
+        return templates.TemplateResponse(
+            "org/kiosks.html",
+            {"request": request, "current_org": org, "active_page": "kiosks", "branches": branches},
+        )
+
+    kiosks = await kiosk_service.list_kiosks(db, org.id)
+    return APIResponse(data=[KioskDeviceRead.model_validate(k) for k in kiosks])
+
+
+@router.post("/kiosks/pair-confirm", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def confirm_kiosk_pairing_api(
+    body: KioskPairConfirmRequest,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        device = await kiosk_service.confirm_pairing_pin(
+            db, org.id, body.pairing_code, device_name=body.device_name, branch_id=body.branch_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="kiosk.pair_confirm",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="kiosk_device",
+        target_id=str(device.id),
+        details={"device_code": device.device_code, "device_name": device.device_name},
+    )
+    return APIResponse(message="Kiosk device paired successfully", data=KioskDeviceRead.model_validate(device))
+
+
+@router.post("/kiosks/{kiosk_id}/revoke", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def revoke_kiosk_api(
+    kiosk_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        device = await kiosk_service.revoke_kiosk(db, org.id, kiosk_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    await audit_service.log_audit_event(
+        db,
+        action="kiosk.revoke",
+        actor_type="organization",
+        actor_id=org.id,
+        actor_email=org.email,
+        organization_id=org.id,
+        target_type="kiosk_device",
+        target_id=str(device.id),
+        details={"device_code": device.device_code},
+    )
+    return APIResponse(message="Kiosk device access revoked", data=KioskDeviceRead.model_validate(device))
+
+
+# ── Phase 5: Finance & Ledgering APIs (LED-001..004, CASH-001..003, FIN-001..002) ─
+
+@router.get("/api/finance/ledger", response_model=PaginatedResponse, dependencies=[Depends(get_current_org)])
+async def get_ledger_journal_api(
+    account: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 25,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve immutable double-entry ledger entries journal (LED-001..003)."""
+    entries, total = await ledger_service.get_ledger_entries(
+        db, organization_id=org.id, account=account, entry_type=entry_type, page=page, per_page=per_page
+    )
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=math.ceil(total / per_page) if total else 1,
+        data=[LedgerEntryRead.model_validate(e) for e in entries],
+    )
+
+
+@router.get("/api/finance/totals", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_ledger_totals_api(
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derive institutional financial figures directly from ledger entries (LED-004)."""
+    totals = await ledger_service.get_ledger_totals(db, organization_id=org.id)
+    return APIResponse(data=totals)
+
+
+@router.get("/api/finance/payment-policy", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_own_payment_policy_api(
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """FIN-001: Read-only view of this organization's permitted payment
+    methods (null = unrestricted). Policy writes are admin-only."""
+    from app.schemas.finance import PaymentPolicyRead
+    allowed = list(org.allowed_payment_methods) if org.allowed_payment_methods else None
+    return APIResponse(
+        data=PaymentPolicyRead(organization_id=org.id, allowed_payment_methods=allowed)
+    )
+
+
+@router.get("/api/finance/reports", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_financial_reports_api(
+    service_id: Optional[int] = None,
+    counter_id: Optional[int] = None,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """CASH-003: Detailed financial reports by service, counter, and booking source."""
+    report = await cash_service.get_financial_breakdown_report(
+        db, organization_id=org.id, service_id=service_id, counter_id=counter_id
+    )
+    return APIResponse(data=report)
+
+
+@router.get("/api/finance/cash-sessions", response_model=PaginatedResponse, dependencies=[Depends(get_current_org)])
+async def list_cash_sessions_api(
+    page: int = 1,
+    per_page: int = 20,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """CASH-001: List physical cash sessions."""
+    from sqlalchemy import select, func
+    from models.finance import CashSession
+    base = select(CashSession).where(CashSession.organization_id == org.id)
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+    sessions = (
+        await db.execute(
+            base.order_by(CashSession.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
+        )
+    ).scalars().all()
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=math.ceil(total / per_page) if total else 1,
+        data=[CashSessionRead.model_validate(s) for s in sessions],
+    )
+
+
+@router.post("/api/finance/cash-sessions/{session_id}/close", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def close_cash_session_api(
+    session_id: int,
+    body: CashSessionCloseRequest,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """CASH-002: Close cash session with physical denomination count and evaluate discrepancy."""
+    try:
+        session = await cash_service.close_cash_session(
+            db,
+            session_id=session_id,
+            counted_cash=body.counted_cash,
+            denominations=body.denominations,
+            notes=body.notes,
+        )
+        return APIResponse(message="Cash session closed successfully", data=CashSessionRead.model_validate(session))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/finance/refunds", response_model=PaginatedResponse, dependencies=[Depends(get_current_org)])
+async def list_org_refunds_api(
+    page: int = 1,
+    per_page: int = 20,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """List refunds for the organization."""
+    refunds, total = await refund_service.list_refunds(db, org.id, page=page, per_page=per_page)
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=math.ceil(total / per_page) if total else 1,
+        data=[RefundRead.model_validate(r) for r in refunds],
+    )
+
+
+@router.post("/api/finance/refunds/{refund_id}/approve", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def approve_refund_api(
+    refund_id: int,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """FIN-001: Approve pending refund."""
+    try:
+        refund = await refund_service.approve_refund(
+            db, organization_id=org.id, refund_id=refund_id, approved_by_type="organization", approved_by_id=org.id
+        )
+        return APIResponse(message="Refund approved and processed", data=RefundRead.model_validate(refund))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/finance/refunds/{refund_id}/reject", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def reject_refund_api(
+    refund_id: int,
+    rejection_reason: str = Query(..., min_length=3),
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """FIN-001: Reject pending refund."""
+    try:
+        refund = await refund_service.reject_refund(
+            db,
+            organization_id=org.id,
+            refund_id=refund_id,
+            rejection_reason=rejection_reason,
+            rejected_by_type="organization",
+            rejected_by_id=org.id,
+        )
+        return APIResponse(message="Refund rejected", data=RefundRead.model_validate(refund))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/finance/bank-account", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def get_org_bank_account_api(
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """FIN-002: Retrieve organization bank details and security hold status."""
+    acc = await bank_account_service.get_bank_account(db, org.id)
+    return APIResponse(data=OrgBankAccountRead.model_validate(acc) if acc else None)
+
+
+@router.post("/api/finance/bank-account", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def update_org_bank_account_api(
+    body: OrgBankAccountUpdate,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """FIN-002: Register or modify bank account details; applies 72h payout hold."""
+    try:
+        acc = await bank_account_service.update_bank_account(
+            db,
+            organization_id=org.id,
+            account_number=body.account_number,
+            ifsc_code=body.ifsc_code,
+            account_holder_name=body.account_holder_name,
+            bank_name=body.bank_name,
+            updated_by_type="organization",
+            updated_by_id=org.id,
+        )
+        return APIResponse(
+            message="Bank account updated; 72-hour payout security hold applied",
+            data=OrgBankAccountRead.model_validate(acc),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/finance/payouts", response_model=PaginatedResponse, dependencies=[Depends(get_current_org)])
+async def list_org_payouts_api(
+    page: int = 1,
+    per_page: int = 20,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """List organization payouts."""
+    payouts, total = await payout_service.list_payouts(db, organization_id=org.id, page=page, per_page=per_page)
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=math.ceil(total / per_page) if total else 1,
+        data=[PayoutRead.model_validate(p) for p in payouts],
+    )

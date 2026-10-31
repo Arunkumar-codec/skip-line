@@ -10,6 +10,8 @@ from typing import Optional
 from sqlalchemy import func, select, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loguru import logger
+
 from app.utils.security import hash_password, verify_password
 from models.counter import Counter, CounterStatus
 from models.organization import Organization, OrgStatus
@@ -231,11 +233,23 @@ async def update_service(db: AsyncSession, service_id: int, org_id: int, data: d
     service = await db.get(Service, service_id)
     if not service or service.organization_id != org_id:
         raise ValueError("Service not found")
+    price_changed = data.get("price") is not None
     for key, val in data.items():
         if val is not None:
             setattr(service, key, val)
     await db.commit()
     await db.refresh(service)
+
+    # FIN-003: price-change risk — active tokens snapshot the price they
+    # were booked at; a catalogue change surfaces one flag for review.
+    if price_changed:
+        from app.services import financial_risk_service
+        try:
+            await financial_risk_service.evaluate_price_change_risk(
+                db, org_id, service.id, new_total_price=service.price
+            )
+        except Exception:
+            logger.exception("FIN-003 price-change risk evaluation failed for service {}", service.id)
     return service
 
 

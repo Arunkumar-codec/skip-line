@@ -39,6 +39,23 @@ from models.custom_form import (                           # noqa: F401
     TokenFormAnswer,
 )
 from models.user_identity import UserIdentity              # noqa: F401
+from models.weekly_schedule import WeeklySchedule          # noqa: F401
+from models.schedule_exception import ScheduleException    # noqa: F401
+from models.time_slot import TimeSlot                      # noqa: F401
+from models.capacity_rule import CapacityRule              # noqa: F401
+from models.schedule_change import ScheduleChangePreview    # noqa: F401
+from models.counter_shift import CounterShift               # noqa: F401
+from models.kiosk_device import KioskDevice                 # noqa: F401
+from models.finance import (                                # noqa: F401
+    LedgerEntry,
+    CashSession,
+    Refund,
+    Payout,
+    Settlement,
+    OrgBankAccount,
+    FinancialRiskFlag,
+    WebhookEvent,
+)
 
 __all__ = [
     "Admin",
@@ -71,4 +88,19 @@ __all__ = [
     "TokenFormSnapshot",
     "TokenFormAnswer",
     "UserIdentity",
+    "WeeklySchedule",
+    "ScheduleException",
+    "TimeSlot",
+    "CapacityRule",
+    "ScheduleChangePreview",
+    "CounterShift",
+    "KioskDevice",
+    "LedgerEntry",
+    "CashSession",
+    "Refund",
+    "Payout",
+    "Settlement",
+    "OrgBankAccount",
+    "FinancialRiskFlag",
+    "WebhookEvent",
 ]

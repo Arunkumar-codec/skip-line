@@ -59,6 +59,7 @@ async def log_audit_event(
     outcome: str = "success",
     details: Optional[dict[str, Any]] = None,
     ip_address: Optional[str] = None,
+    commit: bool = True,
 ) -> AuditLog:
     """Record an immutable audit event."""
     log_entry = AuditLog(
@@ -75,8 +76,9 @@ async def log_audit_event(
         created_at=datetime.now(timezone.utc),
     )
     db.add(log_entry)
-    await db.commit()
-    await db.refresh(log_entry)
+    if commit:
+        await db.commit()
+        await db.refresh(log_entry)
     return log_entry
 
 

@@ -1,7 +1,6 @@
 {% extends "shared/base.html" %}
-{% block title %}Payments{% endblock %}
+{% block title %}Payments & Financial Ledger{% endblock %}
 {% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
-
 
 {% block topnav_user %}
 <div class="dropdown">
@@ -26,74 +25,448 @@
 {% block content %}
 <div class="page-header fade-in-up">
   <div>
-    <h1 class="page-title">Payment Records</h1>
-    <p class="page-subtitle">All payment transactions for your organization</p>
+    <h1 class="page-title">Financials & Ledgering</h1>
+    <p class="page-subtitle">Institutional double-entry ledger, physical cash drawer reconciliation and payouts (Phase 5)</p>
   </div>
-  <div class="stat-card py-2 px-4 d-flex align-items-center gap-3" style="min-width:200px">
-    <div class="stat-icon green" style="width:36px;height:36px"><i class="bi bi-currency-rupee"></i></div>
-    <div>
-      <div class="stat-label">Total Collected</div>
-      <div class="fw-700 text-success">₹{{ "%.2f"|format(total_revenue) }}</div>
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-outline-primary btn-sm" onclick="openBankModal()">
+      <i class="bi bi-bank me-1"></i>Bank Account
+    </button>
+  </div>
+</div>
+
+<!-- Financial Summary Cards (LED-004) -->
+<div class="row g-3 mb-4 fade-in-up">
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon green" style="width:32px;height:32px"><i class="bi bi-currency-rupee"></i></div>
+        <div class="stat-label">Total Revenue</div>
+      </div>
+      <div class="fw-700 text-success fs-5">₹{{ "%.2f"|format(ledger_totals.gross_revenue if ledger_totals else total_revenue) }}</div>
+      <span class="text-xs text-muted">Gross recognized revenue</span>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon purple" style="width:32px;height:32px"><i class="bi bi-wallet2"></i></div>
+        <div class="stat-label">Physical Cash</div>
+      </div>
+      <div class="fw-700 text-primary fs-5">₹{{ "%.2f"|format(ledger_totals.cash_collected if ledger_totals else 0.0) }}</div>
+      <span class="text-xs text-muted">Collected at counter desks</span>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon blue" style="width:32px;height:32px"><i class="bi bi-credit-card"></i></div>
+        <div class="stat-label">Gateway Online</div>
+      </div>
+      <div class="fw-700 text-info fs-5">₹{{ "%.2f"|format(ledger_totals.gateway_collected if ledger_totals else 0.0) }}</div>
+      <span class="text-xs text-muted">Razorpay / UPI digital</span>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="stat-card p-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="stat-icon red" style="width:32px;height:32px"><i class="bi bi-arrow-counterclockwise"></i></div>
+        <div class="stat-label">Refunds & Reversals</div>
+      </div>
+      <div class="fw-700 text-danger fs-5">₹{{ "%.2f"|format(ledger_totals.refunds if ledger_totals else 0.0) }}</div>
+      <span class="text-xs text-muted">Net: ₹{{ "%.2f"|format(ledger_totals.net_revenue if ledger_totals else total_revenue) }}</span>
     </div>
   </div>
 </div>
 
-<div class="content-card fade-in-up">
-  <div class="table-responsive">
-    <table class="sl-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Token</th>
-          <th>Amount</th>
-          <th>Method</th>
-          <th>Status</th>
-          <th>Razorpay ID</th>
-          <th>Paid At</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for p in payments %}
-        <tr>
-          <td class="text-xs text-muted">{{ p.id }}</td>
-          <td>
-            {% if p.token %}
-            <span class="fw-700 text-primary">{{ p.token.token_number }}</span>
-            {% else %}—{% endif %}
-          </td>
-          <td class="fw-700">₹{{ "%.2f"|format(p.amount) }}</td>
-          <td><span class="badge bg-light text-dark">{{ p.payment_method }}</span></td>
-          <td>
-            <span class="badge-status badge-{{ 'completed' if p.status == 'paid' else p.status }}">
-              {{ p.status }}
-            </span>
-          </td>
-          <td class="text-xs text-muted">{{ p.razorpay_payment_id or '—' }}</td>
-          <td class="text-xs text-muted">
-            {{ p.paid_at.strftime('%d %b %Y, %H:%M') if p.paid_at else '—' }}
-          </td>
-        </tr>
-        {% else %}
-        <tr>
-          <td colspan="7" class="text-center text-muted py-5">
-            <i class="bi bi-currency-rupee fs-2 d-block mb-2"></i>No payment records yet
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<!-- Tabs Navigation -->
+<ul class="nav nav-tabs mb-3 fade-in-up" id="financeTab" role="tablist">
+  <li class="nav-item">
+    <button class="nav-link active fw-600" id="tx-tab" data-bs-toggle="tab" data-bs-target="#tab-tx" type="button">
+      <i class="bi bi-receipt me-1"></i>Transactions
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" id="ledger-tab" data-bs-toggle="tab" data-bs-target="#tab-ledger" type="button">
+      <i class="bi bi-journal-text me-1"></i>Ledger Journal (LED-001)
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" id="reconcile-tab" data-bs-toggle="tab" data-bs-target="#tab-reconcile" type="button">
+      <i class="bi bi-cash-stack me-1"></i>Cash Reports (CASH-003)
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link fw-600" id="payout-tab" data-bs-toggle="tab" data-bs-target="#tab-payout" type="button">
+      <i class="bi bi-bank2 me-1"></i>Payouts (FIN-001)
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="financeTabContent">
+  <!-- TAB 1: Transactions -->
+  <div class="tab-pane fade show active" id="tab-tx">
+    <div class="content-card fade-in-up">
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Token</th>
+              <th>Amount</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Reference</th>
+              <th>Paid At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in payments %}
+            <tr>
+              <td class="text-xs text-muted">{{ p.id }}</td>
+              <td>
+                {% if p.token %}
+                <span class="fw-700 text-primary">{{ p.token.token_number }}</span>
+                {% else %}—{% endif %}
+              </td>
+              <td class="fw-700">₹{{ "%.2f"|format(p.amount) }}</td>
+              <td><span class="badge bg-light text-dark">{{ p.payment_method }}</span></td>
+              <td>
+                <span class="badge-status badge-{{ 'completed' if p.status in ('paid', 'cash_collected') else p.status }}">
+                  {{ p.status }}
+                </span>
+              </td>
+              <td class="text-xs text-muted">{{ p.razorpay_payment_id or ('Shift #' ~ p.counter_shift_id if p.counter_shift_id else '—') }}</td>
+              <td class="text-xs text-muted">
+                {{ p.paid_at.strftime('%d %b %Y, %H:%M') if p.paid_at else '—' }}
+              </td>
+              <td>
+                {% if p.status in ('paid', 'cash_collected') and (p.refund_amount or 0) < p.amount %}
+                <button class="btn btn-outline-danger btn-xs" onclick="openRefundModal({{ p.id }}, {{ p.amount - (p.refund_amount or 0) }})">
+                  <i class="bi bi-arrow-counterclockwise me-1"></i>Refund
+                </button>
+                {% else %}
+                <span class="text-muted text-xs">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="8" class="text-center text-muted py-5">
+                <i class="bi bi-currency-rupee fs-2 d-block mb-2"></i>No payment records yet
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if pages > 1 %}
+      <div class="d-flex justify-content-center py-3">
+        <nav><ul class="pagination pagination-sm mb-0">
+          {% for p in range(1, pages+1) %}
+          <li class="page-item {% if p == page %}active{% endif %}">
+            <a class="page-link" href="?page={{ p }}">{{ p }}</a>
+          </li>
+          {% endfor %}
+        </ul></nav>
+      </div>
+      {% endif %}
+    </div>
   </div>
 
-  {% if pages > 1 %}
-  <div class="d-flex justify-content-center py-3">
-    <nav><ul class="pagination pagination-sm mb-0">
-      {% for p in range(1, pages+1) %}
-      <li class="page-item {% if p == page %}active{% endif %}">
-        <a class="page-link" href="?page={{ p }}">{{ p }}</a>
-      </li>
-      {% endfor %}
-    </ul></nav>
+  <!-- TAB 2: Double-Entry Ledger Journal (LED-001..004) -->
+  <div class="tab-pane fade" id="tab-ledger">
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-700 mb-0">Append-Only Double-Entry Journal</h5>
+        <span class="badge bg-info text-dark">Immutable Audit Log</span>
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Date/Time</th>
+              <th>Account</th>
+              <th>Type</th>
+              <th>Direction</th>
+              <th>Amount (₹)</th>
+              <th>Description</th>
+              <th>Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in ledger_entries %}
+            <tr>
+              <td class="text-xs text-muted">#{{ e.id }}</td>
+              <td class="text-xs">{{ e.created_at.strftime('%d %b %Y, %H:%M') if e.created_at else '—' }}</td>
+              <td class="fw-600"><span class="badge bg-light text-dark">{{ e.account }}</span></td>
+              <td class="text-xs">{{ e.entry_type }}</td>
+              <td>
+                <span class="badge bg-{{ 'primary' if e.direction == 'debit' else 'success' }}">
+                  {{ e.direction.upper() }}
+                </span>
+              </td>
+              <td class="fw-700 {{ 'text-primary' if e.direction == 'debit' else 'text-success' }}">
+                ₹{{ "%.2f"|format(e.amount) }}
+              </td>
+              <td class="text-xs text-muted">{{ e.description or '—' }}</td>
+              <td class="text-xs text-muted">{{ e.source_transaction_ref or '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-center text-muted py-4">No ledger journal entries posted yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
-  {% endif %}
+
+  <!-- TAB 3: Cash & Revenue Reconciliation (CASH-003) -->
+  <div class="tab-pane fade" id="tab-reconcile">
+    <div class="content-card fade-in-up p-4">
+      <h5 class="fw-700 mb-3">Revenue & Cash Reconciliation Summary (CASH-003)</h5>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="p-3 bg-light rounded h-100">
+            <h6 class="fw-700 text-muted border-bottom pb-2 mb-2">Collection Breakdown</h6>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Gross Recognized Revenue:</span>
+              <strong class="text-success">₹{{ "%.2f"|format(cash_report.gross_revenue if cash_report else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Physical Counter Cash:</span>
+              <strong>₹{{ "%.2f"|format(cash_report.cash_collected if cash_report else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Online Gateway Collections:</span>
+              <strong>₹{{ "%.2f"|format(cash_report.online_collected if cash_report else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Pending Counter Cash (Uncollected):</span>
+              <strong class="text-warning">₹{{ "%.2f"|format(cash_report.pending_cash if cash_report else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Waived Fee Total (PHY-003):</span>
+              <strong class="text-muted">₹{{ "%.2f"|format(cash_report.waived_amount if cash_report else 0) }}</strong>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="p-3 bg-light rounded h-100">
+            <h6 class="fw-700 text-muted border-bottom pb-2 mb-2">Booking Channels & Net Revenue</h6>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Online / Web:</span>
+              <strong>₹{{ "%.2f"|format(cash_report.breakdown_by_source.online if cash_report and cash_report.breakdown_by_source else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>On-Site Kiosk:</span>
+              <strong>₹{{ "%.2f"|format(cash_report.breakdown_by_source.kiosk if cash_report and cash_report.breakdown_by_source else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span>Assisted Physical Counter Desk:</span>
+              <strong>₹{{ "%.2f"|format(cash_report.breakdown_by_source.assisted_counter if cash_report and cash_report.breakdown_by_source else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm border-top mt-2 pt-2">
+              <span class="fw-700">Estimated Platform Fees (2%):</span>
+              <strong class="text-danger">₹{{ "%.2f"|format(cash_report.platform_fees if cash_report else 0) }}</strong>
+            </div>
+            <div class="d-flex justify-content-between py-1 text-sm">
+              <span class="fw-700">Net Organization Revenue:</span>
+              <strong class="text-success fs-6">₹{{ "%.2f"|format(cash_report.net_organization_revenue if cash_report else 0) }}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: Payouts (FIN-001) -->
+  <div class="tab-pane fade" id="tab-payout">
+    <div class="content-card fade-in-up">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-700 mb-0">Payout History & Settlements</h5>
+        {% if bank_account and bank_account.status == 'verified' %}
+        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Bank Verified</span>
+        {% elif bank_account and bank_account.held_until %}
+        <span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>72h Payout Hold Active</span>
+        {% else %}
+        <span class="badge bg-secondary">No Bank Registered</span>
+        {% endif %}
+      </div>
+      <div class="table-responsive">
+        <table class="sl-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Amount (₹)</th>
+              <th>Status</th>
+              <th>Hold Reason</th>
+              <th>Period</th>
+              <th>Disbursed At</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for po in payouts %}
+            <tr>
+              <td class="text-xs text-muted">#{{ po.id }}</td>
+              <td class="fw-700">₹{{ "%.2f"|format(po.amount) }}</td>
+              <td>
+                <span class="badge-status badge-{{ 'completed' if po.status == 'paid' else ('warning' if po.status == 'held' else 'secondary') }}">
+                  {{ po.status }}
+                </span>
+              </td>
+              <td class="text-xs text-danger">{{ po.hold_reason or '—' }}</td>
+              <td class="text-xs text-muted">{{ po.period_start or '—' }} to {{ po.period_end or '—' }}</td>
+              <td class="text-xs text-muted">{{ po.paid_at.strftime('%d %b %Y') if po.paid_at else '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-4">No payout distributions yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
+
+<!-- Refund Modal (PAY-003, FIN-001) -->
+<div class="modal fade" id="refundModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700">Issue Refund</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="refundPaymentId"/>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Refund Amount (₹) <span class="text-danger">*</span></label>
+          <input type="number" step="0.01" class="form-control form-control-sm" id="refundAmount" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Refund Reason <span class="text-danger">*</span></label>
+          <textarea class="form-control form-control-sm" id="refundReason" rows="2" placeholder="Reason for refund" required></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="submitRefund()">Process Refund</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bank Account Modal (FIN-002) -->
+<div class="modal fade" id="bankModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700">Bank Account Details (FIN-002)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        {% if bank_account and bank_account.held_until %}
+        <div class="alert alert-warning text-xs mb-3">
+          <i class="bi bi-shield-lock me-1"></i>
+          <strong>Security Notice:</strong> Payouts are on temporary 72-hour security hold until {{ bank_account.held_until.strftime('%d %b %Y, %H:%M') }}.
+        </div>
+        {% endif %}
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Account Holder Name <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="bankHolderName" value="{{ bank_account.account_holder_name if bank_account else '' }}" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Bank Name <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="bankName" value="{{ bank_account.bank_name if bank_account else '' }}" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Account Number <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="bankAccountNum" value="{{ bank_account.account_number if bank_account else '' }}" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">IFSC Code <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="bankIfsc" value="{{ bank_account.ifsc_code if bank_account else '' }}" required/>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="submitBankUpdate()">Save Bank Details</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentRefundMax = 0;
+
+function openRefundModal(paymentId, maxAmt) {
+  document.getElementById('refundPaymentId').value = paymentId;
+  document.getElementById('refundAmount').value = parseFloat(maxAmt).toFixed(2);
+  currentRefundMax = maxAmt;
+  new bootstrap.Modal(document.getElementById('refundModal')).show();
+}
+
+async function submitRefund() {
+  const paymentId = document.getElementById('refundPaymentId').value;
+  const amount = parseFloat(document.getElementById('refundAmount').value);
+  const reason = document.getElementById('refundReason').value;
+
+  if (isNaN(amount) || amount <= 0 || amount > currentRefundMax) {
+    alert(`Please enter a valid amount up to ₹${currentRefundMax}`);
+    return;
+  }
+  if (!reason.trim()) {
+    alert('Please provide a reason for the refund');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/payments/${paymentId}/refund`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: amount,
+        reason: reason,
+        idempotency_key: `rfnd_${paymentId}_${Date.now()}`
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Refund failed');
+    alert('Refund processed successfully');
+    location.reload();
+  } catch(err) {
+    alert(err.message);
+  }
+}
+
+function openBankModal() {
+  new bootstrap.Modal(document.getElementById('bankModal')).show();
+}
+
+async function submitBankUpdate() {
+  const payload = {
+    account_holder_name: document.getElementById('bankHolderName').value.trim(),
+    bank_name: document.getElementById('bankName').value.trim(),
+    account_number: document.getElementById('bankAccountNum').value.trim(),
+    ifsc_code: document.getElementById('bankIfsc').value.trim(),
+  };
+
+  try {
+    const res = await fetch('/org/api/finance/bank-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Bank update failed');
+    alert('Bank account updated; 72-hour payout hold applied');
+    location.reload();
+  } catch(err) {
+    alert(err.message);
+  }
+}
+</script>
 {% endblock %}

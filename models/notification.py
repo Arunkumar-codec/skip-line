@@ -28,6 +28,11 @@ class NotificationType(str, enum.Enum):
     ORG_APPROVED = "org_approved"
     ORG_REJECTED = "org_rejected"
     PAYMENT_SUCCESS = "payment_success"
+    # SCH-007 / Decision 11: schedule changes affecting a booking.
+    # The production `notifications.type` column is a plain VARCHAR(40)
+    # (migration 0001), so this member needs no ALTER TABLE; it is stored
+    # as the enum member name exactly like every other notification type.
+    SCHEDULE_CHANGE = "schedule_change"
 
 
 class Notification(Base):

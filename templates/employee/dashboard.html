@@ -1,5 +1,5 @@
 {% extends "shared/base.html" %}
-{% block title %}Employee Portal{% endblock %}
+{% block title %}Operator Station — SkipLine{% endblock %}
 
 {% block topnav_user %}
 <div class="dropdown">
@@ -23,67 +23,617 @@
 {% block content %}
 <div class="page-header fade-in-up">
   <div>
-    <h1 class="page-title">Operator Station</h1>
-    <p class="page-subtitle">Welcome, {{ current_employee.name }} ({{ current_employee.employee_code }}) — {{ branch.name if branch else 'Branch Station' }}</p>
+    <h1 class="page-title">Counter Operator Station</h1>
+    <p class="page-subtitle">{{ current_employee.name }} ({{ current_employee.employee_code }}) · {{ branch.name if branch else 'Main Station' }}</p>
   </div>
-  <div>
-    <span class="badge bg-success-subtle text-success border border-success-subtle py-2 px-3">
-      <i class="bi bi-broadcast me-1"></i>Station Active
-    </span>
+  <div class="d-flex align-items-center gap-2">
+    {% if current_shift and current_shift.status == 'active' %}
+      <span class="badge bg-success-subtle text-success border border-success-subtle py-2 px-3 fw-600">
+        <i class="bi bi-record-circle-fill me-1 text-success pulse"></i>Active Desk (Counter #{{ current_shift.counter.counter_number if current_shift.counter else current_shift.counter_id }})
+      </span>
+      <button class="btn btn-outline-warning btn-sm" onclick="openPauseModal()">
+        <i class="bi bi-pause-circle me-1"></i>Pause
+      </button>
+      <button class="btn btn-outline-danger btn-sm" onclick="openCloseModal()">
+        <i class="bi bi-door-closed me-1"></i>Close Shift
+      </button>
+    {% elif current_shift and current_shift.status == 'paused' %}
+      <span class="badge bg-warning-subtle text-warning border border-warning-subtle py-2 px-3 fw-600">
+        <i class="bi bi-pause-circle-fill me-1"></i>Shift Paused
+      </span>
+      <button class="btn btn-success btn-sm" onclick="resumeShift({{ current_shift.id }})">
+        <i class="bi bi-play-circle me-1"></i>Resume Shift
+      </button>
+    {% elif current_shift and current_shift.status == 'approved' %}
+      <span class="badge bg-info-subtle text-info border border-info-subtle py-2 px-3 fw-600">
+        <i class="bi bi-check-circle-fill me-1"></i>Shift Approved
+      </span>
+      <button class="btn btn-primary btn-sm" onclick="activateShift({{ current_shift.id }})">
+        <i class="bi bi-box-arrow-in-right me-1"></i>Clock In / Activate Desk
+      </button>
+    {% elif current_shift and current_shift.status == 'open_requested' %}
+      <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle py-2 px-3 fw-600">
+        <i class="bi bi-hourglass-split me-1"></i>Awaiting Head Decision
+      </span>
+    {% elif current_shift and current_shift.status == 'close_requested' %}
+      <span class="badge bg-primary-subtle text-primary border border-primary-subtle py-2 px-3 fw-600">
+        <i class="bi bi-cash-stack me-1"></i>Closing Under Reconciliation
+      </span>
+    {% else %}
+      <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle py-2 px-3 fw-600">
+        <i class="bi bi-circle me-1"></i>Shift Not Started
+      </span>
+    {% endif %}
   </div>
 </div>
 
-<div class="row g-3 fade-in-up mb-4">
-  <div class="col-md-4">
-    <div class="content-card p-4">
-      <div class="stat-icon blue mb-2"><i class="bi bi-geo-alt"></i></div>
-      <span class="text-muted text-xs text-uppercase fw-600">Branch Location</span>
-      <h4 class="fw-700 mt-1 mb-0">{{ branch.name if branch else 'Unassigned' }}</h4>
-      <p class="text-xs text-muted mt-1 mb-0">{{ branch.city if branch else '' }}, {{ branch.state if branch else '' }}</p>
+<!-- Shift Workflow Banners & Modals -->
+{% if not current_shift or current_shift.status == 'closed' %}
+<div class="content-card p-4 mb-4 border-primary fade-in-up">
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <div class="stat-icon blue"><i class="bi bi-stopwatch"></i></div>
+    <div>
+      <h5 class="fw-700 mb-0">Daily Shift Open Request (SHIFT-001)</h5>
+      <p class="text-xs text-muted mb-0">Submit your station parameters to begin operations today</p>
     </div>
   </div>
-  <div class="col-md-4">
-    <div class="content-card p-4">
-      <div class="stat-icon green mb-2"><i class="bi bi-shield-check"></i></div>
-      <span class="text-muted text-xs text-uppercase fw-600">Assigned Roles</span>
-      <h4 class="fw-700 mt-1 mb-0">{{ roles | length }} Active Roles</h4>
-      <div class="mt-2">
-        {% for r in roles %}
-          <span class="badge bg-light text-dark border me-1">{{ r.name }}</span>
-        {% else %}
-          <span class="text-xs text-muted">Default Operator</span>
-        {% endfor %}
+  <form id="openShiftForm" onsubmit="submitOpenShift(event)">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label text-xs fw-600">Assigned Counter <span class="text-danger">*</span></label>
+        <select class="form-select form-select-sm" name="counter_id" required>
+          <option value="">Select counter...</option>
+          {% for c in counters %}
+            <option value="{{ c.id }}">{{ c.counter_name }} (#{{ c.counter_number }}) - Prefix {{ c.token_prefix }}</option>
+          {% endfor %}
+        </select>
       </div>
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="content-card p-4">
-      <div class="stat-icon purple mb-2"><i class="bi bi-key"></i></div>
-      <span class="text-muted text-xs text-uppercase fw-600">Granted Capabilities</span>
-      <h4 class="fw-700 mt-1 mb-0">{{ permissions | length }} Permissions</h4>
-      <p class="text-xs text-muted mt-1 mb-0">Fine-grained RBAC active</p>
-    </div>
-  </div>
-</div>
-
-<div class="content-card fade-in-up">
-  <div class="p-4 border-bottom">
-    <h5 class="fw-700 mb-1">Assigned Permissions</h5>
-    <p class="text-muted text-xs mb-0">Your operational capabilities derived from assigned role templates</p>
-  </div>
-  <div class="p-4">
-    <div class="row g-2">
-      {% for p in permissions %}
-      <div class="col-sm-6 col-md-4 col-lg-3">
-        <div class="p-2 border rounded bg-light d-flex align-items-center gap-2">
-          <i class="bi bi-check-circle-fill text-success"></i>
-          <span class="text-xs font-monospace">{{ p }}</span>
+      <div class="col-md-4">
+        <label class="form-label text-xs fw-600">Opening Cash Float (₹) <span class="text-danger">*</span></label>
+        <input type="number" step="0.01" class="form-control form-control-sm" name="opening_cash" value="0.00" required/>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label text-xs fw-600">Offered Services</label>
+        <select class="form-select form-select-sm" name="services" multiple size="2">
+          {% for s in services %}
+            <option value="{{ s.id }}">{{ s.name }} (₹{{ "%.0f"|format(s.price) if s.price > 0 else 'Free' }})</option>
+          {% endfor %}
+        </select>
+        <span class="text-xs text-muted">Hold Ctrl/Cmd to select multiple</span>
+      </div>
+      <div class="col-12">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="device_ready" id="deviceReady" required/>
+          <label class="form-check-label text-xs fw-600" for="deviceReady">
+            Device Readiness Confirmed: Printer, display monitor, and scanner checked & operational.
+          </label>
         </div>
       </div>
+      <div class="col-12">
+        <label class="form-label text-xs fw-600">Remarks / Shift Notes</label>
+        <input type="text" class="form-control form-control-sm" name="remarks" placeholder="Optional notes for supervisor"/>
+      </div>
+      <div class="col-12">
+        <button type="submit" class="btn btn-primary btn-sm px-4">
+          <i class="bi bi-send me-1"></i>Submit Shift Request
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% elif current_shift.status == 'open_requested' %}
+<div class="content-card p-4 mb-4 fade-in-up border-warning">
+  <div class="d-flex align-items-center gap-3">
+    <div class="stat-icon yellow"><i class="bi bi-clock-history"></i></div>
+    <div class="flex-fill">
+      <h5 class="fw-700 mb-1">Shift Request Awaiting Head Decision (SHIFT-002)</h5>
+      <p class="text-xs text-muted mb-0">Counter #{{ current_shift.counter.counter_number if current_shift.counter else current_shift.counter_id }} · Opening Float ₹{{ current_shift.opening_cash }}</p>
+      {% if current_shift.decided_reason %}
+        <div class="alert alert-warning py-2 px-3 mt-2 mb-0 text-xs">
+          <strong>Correction Requested by Head:</strong> {{ current_shift.decided_reason }}
+        </div>
       {% else %}
-      <div class="col-12 text-muted text-xs">No explicit permissions assigned yet. Contact your Organization Administrator.</div>
-      {% endfor %}
+        <p class="text-xs text-secondary mt-1 mb-0">Your request has been delivered to the Organization Head dashboard.</p>
+      {% endif %}
     </div>
   </div>
 </div>
+{% elif current_shift.status == 'approved' %}
+<div class="content-card p-4 mb-4 fade-in-up border-success bg-success-subtle">
+  <div class="d-flex align-items-center justify-content-between">
+    <div class="d-flex align-items-center gap-3">
+      <div class="stat-icon green"><i class="bi bi-shield-check"></i></div>
+      <div>
+        <h5 class="fw-700 mb-1 text-success">Shift Approved by Organization Head!</h5>
+        <p class="text-xs text-muted mb-0">
+          Reason: {{ current_shift.decided_reason or 'Approved for operational duty' }} · Cash Collection: {{ 'Permitted' if current_shift.payment_permitted else 'Disabled' }}
+        </p>
+      </div>
+    </div>
+    <button class="btn btn-success fw-600 px-4" onclick="activateShift({{ current_shift.id }})">
+      <i class="bi bi-box-arrow-in-right me-1"></i>Clock In / Activate Desk
+    </button>
+  </div>
+</div>
+{% elif current_shift.status == 'close_requested' %}
+<div class="content-card p-4 mb-4 fade-in-up border-info">
+  <div class="d-flex align-items-center gap-3">
+    <div class="stat-icon blue"><i class="bi bi-receipt"></i></div>
+    <div>
+      <h5 class="fw-700 mb-1">Shift Closing Submitted for Reconciliation (SHIFT-005/006)</h5>
+      <p class="text-xs text-muted mb-0">
+        Counted Cash: <strong>₹{{ current_shift.closing_cash_counted }}</strong> · Expected Cash: <strong>₹{{ current_shift.closing_cash_expected }}</strong> · Variance: <strong>₹{{ current_shift.closing_cash_variance }}</strong>
+      </p>
+      <span class="badge bg-secondary mt-2">Awaiting supervisor sign-off and reconciliation approval</span>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Active Desk Queue Station -->
+{% if current_shift and current_shift.status in ('active', 'paused') %}
+<div class="row g-3 mb-4 fade-in-up">
+  <div class="col-md-8">
+    <!-- Queue Operations Card -->
+    <div class="content-card p-4 h-100">
+      <div class="d-flex align-items-center justify-content-between border-bottom pb-3 mb-3">
+        <div>
+          <h5 class="fw-700 mb-0">Active Queue Station (SHIFT-003)</h5>
+          <span class="text-xs text-muted">Operating Counter #{{ current_shift.counter.counter_number if current_shift.counter else current_shift.counter_id }}</span>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-primary btn-sm" onclick="loadQueue({{ current_shift.counter_id }})">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+          </button>
+          <button class="btn btn-primary btn-sm fw-600" onclick="callNextToken({{ current_shift.counter_id }})">
+            <i class="bi bi-megaphone-fill me-1"></i>Call Next
+          </button>
+        </div>
+      </div>
+
+      <!-- Current Serving Banner -->
+      <div id="servingContainer" class="p-3 mb-3 rounded bg-light border">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <span class="text-xs text-muted text-uppercase fw-600">Currently Serving</span>
+            <h2 class="fw-800 text-primary mb-0" id="currentServingToken">—</h2>
+            <span class="text-xs text-muted" id="currentServingDetails">No token currently in service</span>
+          </div>
+          <div class="d-flex gap-2" id="servingActions" style="display:none !important">
+            <button class="btn btn-success btn-sm" onclick="actionCurrentToken('complete')">
+              <i class="bi bi-check-lg me-1"></i>Complete
+            </button>
+            <button class="btn btn-outline-danger btn-sm" onclick="actionCurrentToken('no_show')">
+              <i class="bi bi-x-circle me-1"></i>No-Show
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="actionCurrentToken('skip')">
+              <i class="bi bi-skip-forward me-1"></i>Skip
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Waiting Queue Table -->
+      <h6 class="fw-700 text-xs text-uppercase text-muted mb-2">Waiting Queue</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0" style="font-size:.85rem">
+          <thead>
+            <tr class="text-muted text-xs">
+              <th>Pos</th>
+              <th>Token #</th>
+              <th>Visitor</th>
+              <th>Service</th>
+              <th>Status</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody id="queueTableBody">
+            <tr><td colspan="6" class="text-center text-muted py-3">Loading queue...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <!-- Assisted Physical Walk-in Booking Card (PHY-001..004) -->
+    <div class="content-card p-4 h-100">
+      <div class="d-flex align-items-center gap-2 mb-3">
+        <div class="stat-icon purple"><i class="bi bi-person-plus"></i></div>
+        <div>
+          <h5 class="fw-700 mb-0">Assisted Walk-In Booking</h5>
+          <span class="text-xs text-muted">Book walk-in guest token (PHY-001..004)</span>
+        </div>
+      </div>
+
+      <form id="walkinBookingForm" onsubmit="submitWalkinBooking(event)">
+        <input type="hidden" name="counter_id" value="{{ current_shift.counter_id }}"/>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Visitor Mobile <span class="text-danger">*</span></label>
+          <div class="input-group input-group-sm">
+            <input type="tel" class="form-control" id="walkinPhone" name="customer_phone" placeholder="10-digit mobile" required maxlength="15"/>
+            <button class="btn btn-outline-secondary" type="button" onclick="searchCustomer()">
+              <i class="bi bi-search"></i>
+            </button>
+          </div>
+          <div id="customerMatchNote" class="text-xs text-success mt-1 d-none"></div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Visitor Full Name <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="walkinName" name="customer_name" placeholder="Name" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Service <span class="text-danger">*</span></label>
+          <select class="form-select form-select-sm" name="service_id" id="walkinService" required onchange="updateServicePrice()">
+            <option value="">Select service...</option>
+            {% for s in services %}
+              <option value="{{ s.id }}" data-price="{{ s.price }}">{{ s.name }} (₹{{ "%.0f"|format(s.price) if s.price > 0 else 'Free' }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label text-xs fw-600">Payment Option (PHY-002)</label>
+          <select class="form-select form-select-sm" name="payment_method" id="walkinPayment" onchange="toggleWaiverFields()">
+            <option value="cash" {% if not current_shift.payment_permitted %}disabled{% endif %}>Cash Collected {% if not current_shift.payment_permitted %}(No Cash Auth){% endif %}</option>
+            <option value="pay_at_counter">Pay at Counter (Pending)</option>
+            <option value="waived">Fee Waived (Requires Reason)</option>
+            <option value="free">Free Service</option>
+            <option value="online">Online / UPI</option>
+          </select>
+        </div>
+        <div id="waiverGroup" class="mb-2 d-none">
+          <label class="form-label text-xs fw-600 text-danger">Waiver Reason (PHY-003) <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" name="waiver_reason" id="waiverReason" placeholder="Reason for fee waiver"/>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm w-100 fw-600 mt-2">
+          <i class="bi bi-ticket-perforated me-1"></i>Issue Walk-In Token
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Close Shift Modal (SHIFT-005) -->
+<div class="modal fade" id="closeShiftModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700">Shift Closing & Reconciliation (SHIFT-005)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="closingSummarySpinner" class="text-center py-3">
+          <div class="spinner-border spinner-border-sm text-primary"></div> Calculating shift figures...
+        </div>
+        <div id="closingSummaryData" class="d-none">
+          <div class="p-3 bg-light rounded mb-3">
+            <div class="d-flex justify-content-between text-xs mb-1">
+              <span class="text-muted">Opening Cash Float:</span>
+              <strong id="summaryOpeningCash">₹0.00</strong>
+            </div>
+            <div class="d-flex justify-content-between text-xs mb-1">
+              <span class="text-muted">Cash Collected Today:</span>
+              <strong class="text-success" id="summaryCashCollected">₹0.00</strong>
+            </div>
+            <div class="d-flex justify-content-between text-xs mb-1">
+              <span class="text-muted">Expected Cash in Drawer:</span>
+              <strong class="text-primary fs-6" id="summaryExpectedCash">₹0.00</strong>
+            </div>
+            <div class="d-flex justify-content-between text-xs mb-1">
+              <span class="text-muted">Tokens Handled:</span>
+              <strong id="summaryTokensServed">0</strong>
+            </div>
+          </div>
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="form-label text-xs fw-600 mb-0">Physical Cash Counted (₹) <span class="text-danger">*</span></label>
+              <button type="button" class="btn btn-link btn-sm p-0 text-xs text-primary text-decoration-none" onclick="toggleDenominationCounter()">
+                <i class="bi bi-calculator me-1"></i>Denomination Counter
+              </button>
+            </div>
+            <input type="number" step="0.01" class="form-control" id="closeCountedCash" required placeholder="0.00"/>
+            <div id="denominationBox" class="p-2 border rounded bg-white mt-2 d-none">
+              <div class="text-xs fw-700 text-muted mb-2 border-bottom pb-1">Currency Notes & Coins Counter</div>
+              <div class="row g-2 text-xs">
+                <div class="col-4"><label class="text-xs text-muted">₹500 ×</label><input type="number" min="0" class="form-control form-control-sm denom-input" data-val="500" placeholder="0" oninput="calcDenominations()"/></div>
+                <div class="col-4"><label class="text-xs text-muted">₹200 ×</label><input type="number" min="0" class="form-control form-control-sm denom-input" data-val="200" placeholder="0" oninput="calcDenominations()"/></div>
+                <div class="col-4"><label class="text-xs text-muted">₹100 ×</label><input type="number" min="0" class="form-control form-control-sm denom-input" data-val="100" placeholder="0" oninput="calcDenominations()"/></div>
+                <div class="col-4"><label class="text-xs text-muted">₹50 ×</label><input type="number" min="0" class="form-control form-control-sm denom-input" data-val="50" placeholder="0" oninput="calcDenominations()"/></div>
+                <div class="col-4"><label class="text-xs text-muted">₹20 ×</label><input type="number" min="0" class="form-control form-control-sm denom-input" data-val="20" placeholder="0" oninput="calcDenominations()"/></div>
+                <div class="col-4"><label class="text-xs text-muted">₹10 ×</label><input type="number" min="0" class="form-control form-control-sm denom-input" data-val="10" placeholder="0" oninput="calcDenominations()"/></div>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-xs fw-600">Closing Remarks</label>
+            <textarea class="form-control text-xs" id="closeRemarks" rows="2" placeholder="Remarks or discrepancy notes"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="submitCloseShift()">
+          <i class="bi bi-door-closed me-1"></i>Submit Closing Report
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pause Modal -->
+<div class="modal fade" id="pauseShiftModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-700">Pause Shift</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label text-xs fw-600">Pause Reason</label>
+        <input type="text" class="form-control form-control-sm" id="pauseReasonInput" placeholder="Lunch break, maintenance..."/>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-warning btn-sm w-100" onclick="submitPauseShift()">Pause Desk</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentActiveShiftId = {{ current_shift.id if current_shift else 'null' }};
+let currentCounterId = {{ current_shift.counter_id if current_shift else 'null' }};
+let currentlyServingTokenId = null;
+
+async function submitOpenShift(e) {
+  e.preventDefault();
+  const form = e.target;
+  const formData = new FormData(form);
+  const selectedServices = Array.from(form.elements['services'].selectedOptions).map(o => parseInt(o.value));
+  const payload = {
+    counter_id: parseInt(formData.get('counter_id')),
+    opening_cash: parseFloat(formData.get('opening_cash') || 0),
+    services: selectedServices,
+    device_ready: form.elements['device_ready'].checked,
+    remarks: formData.get('remarks') || null
+  };
+  try {
+    await apiRequest('/employee/shifts/open-request', 'POST', payload);
+    showToast('Shift open request submitted', 'success');
+    setTimeout(() => location.reload(), 800);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function activateShift(shiftId) {
+  try {
+    await apiRequest(`/employee/shifts/${shiftId}/activate`, 'POST', {});
+    showToast('Shift activated! Desk is live.', 'success');
+    setTimeout(() => location.reload(), 800);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+function openPauseModal() {
+  new bootstrap.Modal(document.getElementById('pauseShiftModal')).show();
+}
+
+async function submitPauseShift() {
+  const reason = document.getElementById('pauseReasonInput').value;
+  try {
+    await apiRequest(`/employee/shifts/${currentActiveShiftId}/pause`, 'POST', { reason });
+    showToast('Shift paused', 'warning');
+    setTimeout(() => location.reload(), 800);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function resumeShift(shiftId) {
+  try {
+    await apiRequest(`/employee/shifts/${shiftId}/resume`, 'POST', {});
+    showToast('Shift resumed', 'success');
+    setTimeout(() => location.reload(), 800);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function openCloseModal() {
+  const modal = new bootstrap.Modal(document.getElementById('closeShiftModal'));
+  modal.show();
+  document.getElementById('closingSummarySpinner').classList.remove('d-none');
+  document.getElementById('closingSummaryData').classList.add('d-none');
+  try {
+    const res = await apiRequest(`/employee/shifts/${currentActiveShiftId}/closing-summary`, 'GET');
+    const data = res.data;
+    document.getElementById('summaryOpeningCash').textContent = `₹${parseFloat(data.opening_cash).toFixed(2)}`;
+    document.getElementById('summaryCashCollected').textContent = `₹${parseFloat(data.total_cash_collected).toFixed(2)}`;
+    document.getElementById('summaryExpectedCash').textContent = `₹${parseFloat(data.expected_cash).toFixed(2)}`;
+    document.getElementById('summaryTokensServed').textContent = data.total_tokens_served;
+    document.getElementById('closeCountedCash').value = parseFloat(data.expected_cash).toFixed(2);
+    document.getElementById('closingSummarySpinner').classList.add('d-none');
+    document.getElementById('closingSummaryData').classList.remove('d-none');
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+function toggleDenominationCounter() {
+  const box = document.getElementById('denominationBox');
+  box.classList.toggle('d-none');
+}
+
+function calcDenominations() {
+  let total = 0;
+  document.querySelectorAll('.denom-input').forEach(input => {
+    const val = parseFloat(input.dataset.val) || 0;
+    const count = parseInt(input.value) || 0;
+    if (count > 0) total += val * count;
+  });
+  document.getElementById('closeCountedCash').value = total.toFixed(2);
+}
+
+async function submitCloseShift() {
+  const counted = parseFloat(document.getElementById('closeCountedCash').value);
+  if (isNaN(counted) || counted < 0) {
+    showToast('Enter a valid counted cash amount', 'warning');
+    return;
+  }
+  const remarks = document.getElementById('closeRemarks').value;
+  try {
+    await apiRequest(`/employee/shifts/${currentActiveShiftId}/close-request`, 'POST', {
+      counted_cash: counted,
+      remarks: remarks
+    });
+    showToast('Closing report submitted for reconciliation', 'success');
+    setTimeout(() => location.reload(), 800);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+function toggleWaiverFields() {
+  const method = document.getElementById('walkinPayment').value;
+  const grp = document.getElementById('waiverGroup');
+  if (method === 'waived') {
+    grp.classList.remove('d-none');
+    document.getElementById('waiverReason').required = true;
+  } else {
+    grp.classList.add('d-none');
+    document.getElementById('waiverReason').required = false;
+  }
+}
+
+function updateServicePrice() {
+  const opt = document.getElementById('walkinService').selectedOptions[0];
+  const price = opt ? parseFloat(opt.dataset.price || 0) : 0;
+  if (price === 0) {
+    document.getElementById('walkinPayment').value = 'free';
+  }
+  toggleWaiverFields();
+}
+
+async function searchCustomer() {
+  const phone = document.getElementById('walkinPhone').value.trim();
+  if (!phone) return;
+  try {
+    const res = await apiRequest(`/employee/customers/search?phone=${encodeURIComponent(phone)}`, 'GET');
+    const note = document.getElementById('customerMatchNote');
+    if (res.data && res.data.length > 0) {
+      const match = res.data[0];
+      document.getElementById('walkinName').value = match.name;
+      note.textContent = `Matched registered customer: ${match.name}`;
+      note.classList.remove('d-none');
+    } else {
+      note.textContent = 'No previous account found; guest booking will be created.';
+      note.classList.remove('d-none');
+    }
+  } catch(e) {}
+}
+
+async function submitWalkinBooking(e) {
+  e.preventDefault();
+  const form = e.target;
+  const formData = new FormData(form);
+  const payload = {
+    counter_id: parseInt(formData.get('counter_id')),
+    service_id: parseInt(formData.get('service_id')),
+    customer_name: formData.get('customer_name'),
+    customer_phone: formData.get('customer_phone'),
+    payment_method: formData.get('payment_method'),
+    waiver_reason: formData.get('waiver_reason') || null,
+  };
+  try {
+    const res = await apiRequest('/employee/tokens/book-walkin', 'POST', payload);
+    showToast(`Token ${res.data.token.token_number} booked successfully!`, 'success');
+    form.reset();
+    document.getElementById('customerMatchNote').classList.add('d-none');
+    if (currentCounterId) loadQueue(currentCounterId);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function loadQueue(counterId) {
+  if (!counterId) return;
+  try {
+    const res = await apiRequest(`/employee/counters/${counterId}/queue`, 'GET');
+    const tokens = res.data || [];
+    const tbody = document.getElementById('queueTableBody');
+    const serving = tokens.find(t => t.status === 'serving' || t.status === 'called');
+    
+    if (serving) {
+      currentlyServingTokenId = serving.id;
+      document.getElementById('currentServingToken').textContent = serving.token_number;
+      document.getElementById('currentServingDetails').textContent = 
+        `${serving.guest_name || 'Customer'} · Status: ${serving.status.toUpperCase()}`;
+      document.getElementById('servingActions').style.display = 'flex';
+    } else {
+      currentlyServingTokenId = null;
+      document.getElementById('currentServingToken').textContent = '—';
+      document.getElementById('currentServingDetails').textContent = 'No token currently in service';
+      document.getElementById('servingActions').style.display = 'none';
+    }
+
+    const waiting = tokens.filter(t => t.status === 'waiting');
+    if (waiting.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Queue is empty</td></tr>';
+    } else {
+      tbody.innerHTML = waiting.map(t => `
+        <tr>
+          <td><span class="badge bg-light text-dark border">#${t.queue_position}</span></td>
+          <td class="fw-700 text-primary">${t.token_number}</td>
+          <td>${t.guest_name || 'Customer'}</td>
+          <td>${t.service_id || 'General'}</td>
+          <td><span class="badge bg-secondary-subtle text-secondary">${t.status}</span></td>
+          <td class="text-end">
+            <button class="btn btn-outline-primary btn-xs" onclick="callSpecificToken(${t.id})">Call</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+  } catch(e) {}
+}
+
+async function callNextToken(counterId) {
+  try {
+    const res = await apiRequest(`/employee/counters/${counterId}/call-next`, 'POST', {});
+    showToast(`Called token ${res.data.token_number}`, 'success');
+    loadQueue(counterId);
+  } catch(err) {
+    showToast(err.message, 'warning');
+  }
+}
+
+async function callSpecificToken(tokenId) {
+  try {
+    await apiRequest(`/employee/tokens/${tokenId}/action`, 'POST', { action: 'call' });
+    showToast('Token called', 'success');
+    if (currentCounterId) loadQueue(currentCounterId);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function actionCurrentToken(action) {
+  if (!currentlyServingTokenId) return;
+  try {
+    await apiRequest(`/employee/tokens/${currentlyServingTokenId}/action`, 'POST', { action });
+    showToast(`Token marked as ${action}`, 'success');
+    if (currentCounterId) loadQueue(currentCounterId);
+  } catch(err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (currentCounterId && (currentActiveShiftId !== null)) {
+    loadQueue(currentCounterId);
+    setInterval(() => loadQueue(currentCounterId), 15000);
+  }
+});
+</script>
 {% endblock %}

@@ -112,6 +112,10 @@
     <div class="step" id="step4">
       <div class="token-result">
         <div class="text-success fw-600 mb-2"><i class="bi bi-check-circle-fill me-1"></i>Token Issued!</div>
+        <div class="alert alert-primary py-2 px-3 mb-3 text-center d-flex align-items-center justify-content-center gap-2" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
+          <i class="bi bi-shield-lock-fill text-primary"></i>
+          <span class="text-xs" style="color:#1e40af">Privacy protection: Screen resets in <strong id="resetCountdown">20</strong>s</span>
+        </div>
         <div class="token-big mb-3" id="issuedToken">—</div>
         <div class="text-muted text-sm mb-4" id="tokenMeta"></div>
         <img id="qrImg" class="mb-4" style="width:150px;height:150px;border-radius:10px;border:2px solid #e2e8f0" src="" alt="QR"/>
@@ -134,11 +138,25 @@
 <script>
 const ORG_ID = {{ org_id }};
 let selectedServiceId = null, selectedCounterId = null;
+let privacyCountdownTimer = null;
+let inactivityTimer = null;
 
 // Clock
 setInterval(() => {
   document.getElementById('kioskTime').textContent = new Date().toLocaleTimeString('en-IN');
 }, 1000);
+
+// Inactivity detector: 45s across steps 1-3 automatically resets kiosk
+function resetInactivity() {
+  clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(() => {
+    resetKiosk();
+  }, 45000);
+}
+['click', 'touchstart', 'keypress'].forEach(evt => {
+  window.addEventListener(evt, resetInactivity, { passive: true });
+});
+resetInactivity();
 
 function goStep(n) {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
@@ -185,6 +203,7 @@ async function issueToken() {
     document.getElementById('qrImg').src = `/${token.qr_code_path}`;
     document.getElementById('receiptLink').href = `/tokens/${token.id}/receipt`;
     goStep(4);
+    startPrivacyCountdown();
   } catch(e) {
     showToast(e.message || 'Could not issue token', 'danger');
   } finally {
@@ -192,10 +211,52 @@ async function issueToken() {
   }
 }
 
+// KSK-002: 20-second automatic privacy reset countdown with memory flush
+function startPrivacyCountdown() {
+  clearInterval(privacyCountdownTimer);
+  let timeLeft = 20;
+  const cdEl = document.getElementById('resetCountdown');
+  if (cdEl) cdEl.textContent = timeLeft;
+
+  privacyCountdownTimer = setInterval(() => {
+    timeLeft--;
+    if (cdEl) cdEl.textContent = timeLeft;
+    if (timeLeft <= 0) {
+      clearInterval(privacyCountdownTimer);
+      resetKiosk();
+    }
+  }, 1000);
+}
+
+// KSK-004: Automatically clear temporary data, memory variables, and reset to initial state
 function resetKiosk() {
-  selectedServiceId = selectedCounterId = null;
-  document.getElementById('guestName').value = '';
-  document.getElementById('guestMobile').value = '';
+  clearInterval(privacyCountdownTimer);
+  selectedServiceId = null;
+  selectedCounterId = null;
+
+  // Flush inputs and memory
+  const nameEl = document.getElementById('guestName');
+  if (nameEl) nameEl.value = '';
+  const mobileEl = document.getElementById('guestMobile');
+  if (mobileEl) mobileEl.value = '';
+
+  const tokenEl = document.getElementById('issuedToken');
+  if (tokenEl) tokenEl.textContent = '—';
+  const metaEl = document.getElementById('tokenMeta');
+  if (metaEl) metaEl.innerHTML = '';
+  const qrEl = document.getElementById('qrImg');
+  if (qrEl) qrEl.src = '';
+  const receiptEl = document.getElementById('receiptLink');
+  if (receiptEl) receiptEl.href = '#';
+
+  document.querySelectorAll('.service-btn').forEach(b => b.classList.remove('selected'));
+  document.querySelectorAll('.counter-btn').forEach(b => b.classList.remove('selected'));
+
+  try {
+    sessionStorage.clear();
+    localStorage.clear();
+  } catch(e) {}
+
   goStep(1);
 }
 </script>

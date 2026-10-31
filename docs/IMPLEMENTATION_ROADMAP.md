@@ -102,6 +102,7 @@ SkipLine will be implemented in sequential, well-defined phases according to **S
   - Create `schedule_exceptions` (holiday closures, emergency schedule changes).
   - Create `time_slots` (slot date, start_time, end_time, capacity, booked_count).
   - Create `capacity_rules` table.
+  - Add `organizations.timezone` (IANA identifier, server default `Asia/Kolkata`) and nullable `tokens.slot_id` (day-queue tokens stay `NULL`); see migration `0005`.
 - **Backend & APIs:**
   - Slot generator background utility.
   - Atomic slot booking with database concurrency locking (`SELECT ... FOR UPDATE` or optimistic versioning).
@@ -109,24 +110,40 @@ SkipLine will be implemented in sequential, well-defined phases according to **S
 - **User Interface:**
   - Organization panel: Weekly operating hours & holiday calendar manager.
   - Customer booking flow: Interactive date picker and time-slot selector.
+- **Design Clarifications (Oct 28, 2026):** Binding design decisions and data-model constraints for this phase are recorded in [`docs/OPEN_DECISIONS.md`](OPEN_DECISIONS.md) §4 (Decisions 10-15): hybrid day-queue/slot capacity model with day-queue as default (`queue_mode` per counter; §25 item 8), schedule scoping via `(scope_level, scope_id, organization_id)` with service > counter > branch > org precedence (SCH-002), UTC storage + IANA timezone per organization and branch (SCH-009), guarded atomic `UPDATE ... WHERE booked_count < capacity` as the portable reservation mechanism, and payment-reservation expiry hooks deferred for Phase 5 wiring (SCH-006).
 - **Release Gate 3:** Concurrency stress test proves that slot capacity cannot be oversold under simultaneous concurrent requests.
+- **Completion record (development-complete, October 29, 2026):** All Phase 3 deliverables shipped and tested (full suite **363/363 green**; tasks logged in [`docs/FEATURE_REQUIREMENTS_MATRIX.md`](FEATURE_REQUIREMENTS_MATRIX.md)):
+  - *Data model:* `weekly_schedules`, `schedule_exceptions`, `time_slots`, `capacity_rules`, `organizations.timezone`, `branches` geo + timezone, `tokens.slot_id`/`booking_source`, `schedule_change_previews` — migrations `0005`–`0008`.
+  - *Backend:* schedule resolution (SCH-002 precedence, SCH-003 exceptions, SCH-008 states), idempotent slot generation (the "slot generator utility" is the documented lazy `ensure_slots_for_date`/`generate_slots_for_date` engine reused by booking, calendar, ladder and change previews — no background service; OPEN_DECISIONS §4 discovery notes), atomic guarded-UPDATE slot reservation (portable `SELECT ... FOR UPDATE` alternative embraced by Decision 10/§4), capacity-rule enforcement engine (SCH-004), same-day cutoff (SCH-005), SCH-007 impact workflow, timezone rendering + public slot ladder (SCH-009), discovery filters (Decision 15 scope: distance/pincode/service/slot-date).
+  - *UI:* organization-panel schedule manager (weekly hours + holiday calendar; Task 10). Customer booking UX (date picker / time-slot selector screens) is **deferred to Phase 9** per Decision 15 — the selection surface exists as backend APIs (`GET /public/organizations/{id}/slot-dates`, `GET /public/organizations/{id}/slots`).
+  - *Release Gate 3 status:* oversell is proven impossible under 6-way concurrent booking on the test backend (guarded conditional UPDATE, two-connection SQLite file-DB stress test); **MySQL InnoDB locking execution remains a deployment gate** — not yet validated, not claimed.
+- **Outstanding follow-ups recorded (not resolved):** OPEN **Decision 16** (cancellation/capacity release — blocks the SCH-005 cancel/reschedule cutoff leg and the SCH-007 reschedule-execution leg); refund leg and payment-hold expiry sweeper are Phase 5 (Decisions 11/14); customer UX phase 9 (Decision 15); MySQL validation for migrations `0005`–`0008` incl. InnoDB concurrency (deployment gate).
 
 ---
 
 ### Phase 4: Channels (Kiosk Privacy, Assisted Physical Desks & Shifts)
 **Primary Objective:** Unify physical walk-in operations with online queues while protecting walk-in guest privacy.
+**Completion status (recorded October 30, 2026):** **Phase 4 is development-complete.**
+- **SHIFT-001/002:** Daily counter shift request (`OPEN_REQUESTED`), head approval (`APPROVED`), activation (`ACTIVE`).
+- **SHIFT-003:** Active-shift authorization gate enforced on all employee desk operations (call next, actions, assisted bookings).
+- **SHIFT-004:** Shift pause (`PAUSED`), resume (`ACTIVE`), handover, formal closure, and automatic pause on logout.
+- **SHIFT-005/006:** Shift closing summary, cash variance computation, head reconciliation review (`reconcile`: approve, request_correction, record_discrepancy, escalate) and authorized adjustment (`adjust`).
+- **PHY-001..004:** Assisted physical desk walk-in booking, customer lookup, explicit payment states (`CASH_COLLECTED`, `WAIVED`, `FREE`, `PAY_AT_COUNTER`), waiver reason & supervised evidence verification.
+- **KSK-001..006:** Kiosk pairing PIN request (Open Decision 7), org confirmation, PIN exchange for API key, heartbeat monitoring, device revocation, 20s privacy countdown with memory flush, 45s inactivity auto-clear, and idempotency (`client_reference`) token deduplication.
+- **Release Gate 4:** Fully validated. 21/21 Phase 4 API integration tests passing green.
 
 - **Database Changes:**
   - Create `counter_shifts` table (counter_id, employee_id, shift_date, status: `CLOSED`, `OPEN_REQUESTED`, `APPROVED`, `ACTIVE`, `PAUSED`, `CLOSE_REQUESTED`, `RECONCILING`).
-  - Create `kiosk_devices` table with device activation credentials.
+  - Create `kiosk_devices` table with device activation credentials (migration `0010`).
+  - Extend `payments` and `tokens` with waiver evidence, client reference idempotency, and counter_shift tracking (migrations `0010`, `0011`).
 - **Backend & APIs:**
-  - Employee shift state machine: Open request -> Head approval -> Active desk.
+  - Employee shift state machine: Open request -> Head approval -> Active desk -> Pause / Resume / Handover -> Close -> Reconcile -> Adjust.
   - Assisted physical counter booking API (`POST /employee/tokens/book-walkin`).
-  - Kiosk rate-limiting and device authentication middleware.
+  - Kiosk pairing, heartbeat, revocation and device APIs.
 - **User Interface:**
-  - Employee Counter Operator station with assisted booking drawer.
-  - Kiosk page update: **20-second automatic privacy reset countdown** with memory flush ([`KSK-002`](file:///c:/Arunakumara/skip-line-FINAL/skip-line/docs/FEATURE_REQUIREMENTS_MATRIX.md#l157)).
-  - Organization Head dashboard: Real-time shift opening requests and approval drawer.
+  - Employee Counter Operator station with assisted booking drawer and shift lifecycle modals (`templates/employee/dashboard.html`).
+  - Kiosk page update: **20-second automatic privacy reset countdown** with memory flush and **45-second inactivity reset** (`templates/public/kiosk.html`).
+  - Organization Head dashboard: Shift approval, active desk monitoring, reconciliation review, adjustments (`templates/org/shifts.html`) and Kiosk device management (`templates/org/kiosks.html`).
 - **Release Gate 4:** Kiosk automatically resets privacy without leaving previous visitor data; employees cannot operate counters without approved shift.
 
 ---
@@ -149,6 +166,25 @@ SkipLine will be implemented in sequential, well-defined phases according to **S
   - Organization Head Payments tab: Ledger journal view, cash reconciliation reports, payout history.
   - Admin panel: System-wide revenue, gateway escrow balance, and payout releases.
 - **Release Gate 5:** Financial reconciliation test passes: total gateway debits + cash collections exactly equal organization earnings + platform fees.
+
+#### Completion status (October 31, 2026) — COMPLETE (all FIN legs closed)
+
+- **Implemented & tested** (full suite **428 passed / 0 failed**, twice consecutively; Phase 5 evidence):
+  - *Ledger (LED-001..004):* immutable double-entry ledger (`ledger_entries` via migration `0012`; `models/finance.py`; `app/services/ledger_service.py` — balanced `post_double_entry`, `post_adjustment_entry` with reason/approval, `get_ledger_totals` derived-from-ledger-only). 12 unit tests in `tests/unit/test_ledger_and_finance.py`.
+  - *Refunds (PAY-003/PAY-004):* idempotent lifecycle with `idempotency_key` UNIQUE, auto-approval endpoint and approve/reject workflow (`app/services/refund_service.py`, `app/routers/payments.py`, `app/routers/org.py`); reversal entries posted; payment becomes `partially_refunded`/`refunded`.
+  - *Webhooks (PAY-003..005):* HMAC-SHA256 raw-body signature verification, `webhook_events.event_id` UNIQUE replay-safety, single-confirmation rule, gateway→revenue ledger charge, hold promotion (`app/services/webhook_service.py`, `POST /payments/webhook`).
+  - *Cash (CASH-001..003):* cash sessions with denominations + discrepancy states (matched/shortage/excess/pending_verification) and SHIFT-005 head reconciliation tie-in (`app/services/cash_service.py`, `app/services/shift_service.py`); breakdown reporting endpoint (`/org/api/finance/reports`) + org UI (`templates/org/payments.html`, `templates/org/reports_revenue.html`).
+  - *Payouts & bank accounts (FIN-001/FIN-002):* payout scheduling, hold/release with mandatory reason + audit, guarded disbursement posting the payout double entry; bank-account update with 72-hour security hold, owner notification and admin verification (`app/services/payout_service.py`, `app/services/bank_account_service.py`).
+  - *Risk flags (FIN-003/FIN-004):* proportional flags (unusual amount, refund spikes, cash discrepancy) with resolve/dismiss requiring notes + audit (`app/services/financial_risk_service.py`).
+  - *FIN-001 closure (Oct 31 2026):* organization **payment-method policy** (nullable JSON `organizations.allowed_payment_methods`, migration `0013`, admin-only write with audit, NULL = unrestricted) enforced at **both** acceptance points — online Razorpay order creation and counter walk-ins (online walk-ins validated as `razorpay`) — plus **paid-booking pause/resume** reusing `TokenStatus.ON_HOLD` (capacity consumed, pause ≠ cancel per Decision 16) with mandatory reason, full audit, and an engine-level guard in `perform_token_action` that blocks operator `call`/`progress`/`complete` on paused tokens from every endpoint. Admin API (`/admin/api/organizations/{org_id}/payment-policy`, `/admin/tokens/{id}/pause|resume`), org read view, and a "Payment Control" admin-UI tab.
+  - *FIN-003 closure (Oct 31 2026):* the six missing rules — unusual **volume** (≥100 payments/24h, provisional), **duplicate references** (`razorpay_order_id` + `client_reference` reuse, org-scoped), **after-hours activity** (org-timezone resolution via schedule_service; skipped for tenants without published schedules), **waiver irregularity** (every waiver surfaced for review), **price changes** (active-token price snapshots, base + sub-service), **payment-token mismatch** (org mismatch / terminal-token confirmation / multiple successful payments / amount-vs-snapshot) — wired into payment verification, the webhook confirm branch, walk-in booking and catalogue price edits. `flag_risk` gained an additive `commit=False` mode so evaluations never break booking/confirmation atomicity.
+  - *Admin financial management UI:* `GET /admin/finance` + `templates/admin/finance.html` — payout review/hold/release/disburse, risk-flag review, bank-verification queue, ledger-derived overview; backed by `/admin/api/finance/*` endpoints (`app/routers/admin.py`); sidebar entry in `templates/shared/admin_sidebar.html`. 7 tests in `tests/api/test_admin_finance_ui.py`.
+- **Migration validated (MySQL 8.0.46, disposable database — dropped after validation):** `alembic upgrade head` applies all of `0001`→`0013` on real InnoDB (0013 adds the FIN-001 policy/hold columns, verified up + full downgrade back to 0012 with zero leftover columns); full `downgrade base` also applies after four genuine MySQL fixes (FK-before-index/column drop order in migrations `0004`, `0005`, `0009`, `0010`; plus `migrations/env.py` now builds the async `aiomysql` engine instead of the sync `pymysql` URL — Alembic could not run against MySQL at all before). All Phase 5 tables verified InnoDB/utf8mb4 with FKs, composite indexes and idempotency UNIQUES (`webhook_events.event_id`, `refunds.idempotency_key`). InnoDB two-connection probe of the guarded `UPDATE ... WHERE booked_count + held_count < capacity` primitive passed (row-lock wait + guard re-evaluation → no overbooking; also clears the Phase 3 InnoDB deployment-gate concern).
+- **Remaining open items (recorded, not silently dropped):**
+  - Settlements: not implemented — the settlement model is an **Open Decision** (MASTER_REQUIREMENTS §25 item 12); the `settlements` table remains unused.
+  - Fee configuration: **not implemented and not required** by the authoritative requirements (MASTER_REQUIREMENTS has no admin fee-configuration feature; CASH-003's platform-fee reporting remains ledger-derived).
+  - FIN-003 volume/waiver thresholds are PROVISIONAL (OPEN_DECISIONS Decision 18) pending a business decision — no values are stated in the authoritative requirements.
+- **Gateway debit/cash vs. earnings reconciliation:** covered at the ledger level — every charge, refund, payout, cash session and adjustment posts balanced double entries, and totals reconcile cash vs. gateway splits in reports; the formal Release Gate reconciliation assertion is executed at phase-sign-off (see Release Gate 5 report).
 
 ---
 

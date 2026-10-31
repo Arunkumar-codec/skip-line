@@ -20,7 +20,9 @@ from app.database import Base  # noqa: E402
 import models  # noqa: F401, E402 — registers all ORM models
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.sync_database_url)
+# Async engine (mysql+aiomysql) is required by run_async_migrations below;
+# the sync pymysql URL would raise InvalidRequestError ("'pymysql' is not async").
+config.set_main_option("sqlalchemy.url", settings.async_database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

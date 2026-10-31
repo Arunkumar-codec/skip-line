@@ -21,7 +21,7 @@ def upgrade() -> None:
             sa.Column(
                 "branch_id",
                 sa.Integer(),
-                sa.ForeignKey("branches.id", ondelete="SET NULL"),
+                sa.ForeignKey("branches.id", ondelete="SET NULL", name="fk_services_branch"),
                 nullable=True,
             )
         )
@@ -43,7 +43,7 @@ def upgrade() -> None:
             sa.Column(
                 "branch_id",
                 sa.Integer(),
-                sa.ForeignKey("branches.id", ondelete="SET NULL"),
+                sa.ForeignKey("branches.id", ondelete="SET NULL", name="fk_counters_branch"),
                 nullable=True,
             )
         )
@@ -432,10 +432,13 @@ def downgrade() -> None:
     op.drop_table("counter_services")
 
     with op.batch_alter_table("counters") as batch_op:
+        # MySQL: FK must be dropped before an index it depends on (error 1553)
+        batch_op.drop_constraint("fk_counters_branch", type_="foreignkey")
         batch_op.drop_index("ix_counters_branch_id")
         batch_op.drop_column("branch_id")
 
     with op.batch_alter_table("services") as batch_op:
+        batch_op.drop_constraint("fk_services_branch", type_="foreignkey")
         batch_op.drop_index("ix_services_service_code")
         batch_op.drop_index("ix_services_branch_id")
         batch_op.drop_column("requires_identity_verification")

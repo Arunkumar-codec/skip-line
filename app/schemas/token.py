@@ -14,6 +14,9 @@ class TokenBookRequest(BaseModel):
     service_id: Optional[int] = None
     sub_service_ids: Optional[list[int]] = None
     form_answers: Optional[dict[str, Any]] = None
+    # Appointment slot for slot-mode counters (Decision 10); NULL = day-queue
+    slot_id: Optional[int] = None
+    client_reference: Optional[str] = None
 
 
 class KioskTokenRequest(BaseModel):
@@ -25,6 +28,9 @@ class KioskTokenRequest(BaseModel):
     form_answers: Optional[dict[str, Any]] = None
     guest_name: str
     guest_mobile: str
+    # Appointment slot for slot-mode counters (Decision 10); NULL = day-queue
+    slot_id: Optional[int] = None
+    client_reference: Optional[str] = None
 
 
 class TokenActionRequest(BaseModel):
@@ -41,9 +47,11 @@ class TokenRead(BaseModel):
     user_id: Optional[int]
     counter_id: int
     service_id: Optional[int]
+    slot_id: Optional[int]
     token_number: str
     status: str
     queue_position: int
+    booking_source: Optional[str] = None
     guest_name: Optional[str]
     guest_mobile: Optional[str]
     qr_code_path: Optional[str]

@@ -5,7 +5,7 @@ Physical branch / location of an organization (e.g. Main Hospital, City Clinic).
 Used to scope physical counters, staff, and localized queue configurations.
 """
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -29,6 +29,16 @@ class Branch(Base, TimestampMixin):
     state: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     pincode: Mapped[str] = mapped_column(String(20), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Optional IANA timezone override (SCH-009 — branch-level override is
+    # required by the requirement). NULL = inherit the organization timezone.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Optional geocoded position (Phase 3 Task 4 distance search,
+    # ARCHITECTURE_PROPOSAL §data-model). NULL = not geocoded; such branches
+    # are excluded from radius-filtered discovery results.
+    geo_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geo_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="branches")

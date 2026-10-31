@@ -12,6 +12,8 @@ Features:
 from decimal import Decimal
 from typing import Optional
 
+from loguru import logger
+
 from fastapi import HTTPException, status
 from sqlalchemy import delete, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -136,6 +138,19 @@ async def update_sub_service(
 
     await db.commit()
     await db.refresh(sub)
+
+    # FIN-003: price-change risk for sub-service price snapshots.
+    if additional_price is not None:
+        from app.services import financial_risk_service
+        parent_service = await db.get(Service, sub.service_id)
+        try:
+            await financial_risk_service.evaluate_price_change_risk(
+                db, parent_service.organization_id, sub.service_id,
+                new_sub_price=sub.additional_price,
+                sub_service_id=sub.id,
+            )
+        except Exception:
+            logger.exception("FIN-003 price-change risk evaluation failed for sub-service {}", sub.id)
     return sub
 
 

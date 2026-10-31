@@ -21,6 +21,18 @@ class CounterStatus(str, enum.Enum):
     BREAK = "break"
 
 
+class QueueMode(str, enum.Enum):
+    """Booking capacity mode (OPEN_DECISIONS Decision 10).
+
+    DAY_QUEUE preserves the Phase 1-2 behavior (all-day walk-in queue,
+    daily_limit governs issuance). SLOTS exposes discrete appointment
+    slots managed in `time_slots`.
+    """
+
+    DAY_QUEUE = "day_queue"
+    SLOTS = "slots"
+
+
 class Counter(Base, TimestampMixin):
     __tablename__ = "counters"
 
@@ -40,6 +52,14 @@ class Counter(Base, TimestampMixin):
     # Prefix for tokens, e.g. "A" → A-001
     token_prefix: Mapped[str] = mapped_column(String(5), nullable=False, default="A")
     daily_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
+
+    # Booking capacity mode (Decision 10): day_queue is the default so all
+    # existing counters keep Phase 1-2 behavior unchanged.
+    queue_mode: Mapped[str] = mapped_column(
+        Enum(QueueMode, values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=QueueMode.DAY_QUEUE,
+    )
     status: Mapped[str] = mapped_column(
         Enum(CounterStatus), nullable=False, default=CounterStatus.ACTIVE
     )

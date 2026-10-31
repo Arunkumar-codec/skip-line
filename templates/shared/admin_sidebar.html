@@ -35,6 +35,12 @@
     <a href="/admin/reports/queue" class="nav-item {% if active_page == 'queue_stats' %}active{% endif %}">
       <i class="bi bi-bar-chart-line"></i><span>Queue Stats</span>
     </a>
+    <a href="/admin/finance" class="nav-item {% if active_page == 'finance' %}active{% endif %}">
+      <i class="bi bi-bank2"></i><span>Financial Management</span>
+      {% if payout_counts is defined and payout_counts.get('held', 0) > 0 %}
+        <span class="badge bg-warning text-dark ms-auto">{{ payout_counts.get('held', 0) }}</span>
+      {% endif %}
+    </a>
 
     <div class="nav-section-label">System</div>
     <a href="/admin/settings" class="nav-item {% if active_page == 'settings' %}active{% endif %}">

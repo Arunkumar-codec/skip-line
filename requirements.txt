@@ -8,6 +8,7 @@ aiofiles==23.2.1                 # static file serving
 # ── Database ───────────────────────────────────────────────────────────────────
 sqlalchemy==2.0.30
 aiomysql==0.2.0                  # async MySQL driver
+tzdata==2026.6                   # IANA time zones for zoneinfo (SCH-009; required on Windows)
 alembic==1.13.1                  # schema migrations
 pymysql==1.1.1                   # sync driver used by Alembic CLI
 

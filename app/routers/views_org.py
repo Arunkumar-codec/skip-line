@@ -16,7 +16,8 @@ Fixes applied:
 """
 
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as dt_date, time as dt_time
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -27,19 +28,25 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.services import (
+    bank_account_service,
     branch_service,
+    cash_service,
     employee_service,
+    ledger_service,
     org_service,
     payment_service,
+    payout_service,
     rbac_service,
     token_service,
 )
+from app.services import schedule_service
 from app.utils.jwt import create_access_token, decode_token
 from models.counter import Counter, CounterStatus
 from models.organization import Organization, OrgStatus
 from models.payment import Payment, PaymentStatus
 from models.service import Service
 from models.token import Token, TokenStatus
+from models.weekly_schedule import ScheduleScopeLevel
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -263,6 +270,212 @@ async def counters_page(request: Request, db: AsyncSession = Depends(get_db)):
     })
 
 
+# ── Schedule manager (Phase 3: weekly operating hours + holiday calendar) ────
+#
+# Server-rendered panel wired to the SAME schedule_service CRUD the org API
+# uses — Decision 17 honored (configuration rows only; generated time_slots
+# and existing bookings are never touched from the panel). The panel scope is
+# deliberately organization-level (the roadmap bullet's "weekly operating
+# hours & holiday calendar"); branch/counter/service scoped schedules and
+# capacity rules stay on the /org/schedules/* API endpoints. Edits that
+# affect confirmed tokens must run the SCH-007 impact workflow
+# (/org/schedules/changes/*) — the panel links to it instead of bypassing it.
+
+_SCHEDULE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                  "Saturday", "Sunday"]
+
+
+def _weekly_row_json(row):
+    return {
+        "id": row.id,
+        "day_of_week": row.day_of_week,
+        "is_closed": bool(row.is_closed),
+        "open_time": row.open_time.isoformat() if row.open_time else None,
+        "close_time": row.close_time.isoformat() if row.close_time else None,
+        "slot_interval_minutes": row.slot_interval_minutes,
+    }
+
+
+def _exception_row_json(row):
+    return {
+        "id": row.id,
+        "exception_date": row.exception_date.isoformat(),
+        "exception_type": row.exception_type.value
+        if hasattr(row.exception_type, "value") else str(row.exception_type),
+        "reason": row.reason,
+        "opens_at": row.opens_at.isoformat() if row.opens_at else None,
+        "closes_at": row.closes_at.isoformat() if row.closes_at else None,
+        "capacity_factor": float(row.capacity_factor)
+        if row.capacity_factor is not None else None,
+    }
+
+
+@router.get("/schedule", response_class=HTMLResponse)
+async def schedule_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    weekly = await schedule_service.list_weekly_schedules(
+        db, org.id,
+        scope_level=ScheduleScopeLevel.ORGANIZATION, scope_id=org.id,
+    )
+    exceptions = await schedule_service.list_schedule_exceptions(
+        db, org.id,
+        scope_level=ScheduleScopeLevel.ORGANIZATION, scope_id=org.id,
+    )
+    weekly_json = [
+        {**_weekly_row_json(r), "day_name": _SCHEDULE_DAYS[r.day_of_week]}
+        for r in weekly
+    ]
+    exceptions_json = [_exception_row_json(r) for r in exceptions]
+    return templates.TemplateResponse("org/schedule.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "schedule",
+        "weekly_json": weekly_json,
+        "exceptions_json": exceptions_json,
+        "schedule_days": _SCHEDULE_DAYS,
+    })
+
+
+def _optional_time(raw):
+    """'HH:MM[:SS]' → time, or None for blank input."""
+    if raw is None or str(raw).strip() == "":
+        return None
+    return dt_time.fromisoformat(str(raw).strip())
+
+
+@router.post("/schedule/weekly/save")
+async def schedule_weekly_save(request: Request, db: AsyncSession = Depends(get_db)):
+    """Create or update ONE weekday row at organization scope (cookie session)."""
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    data = await request.json()
+    try:
+        day_of_week = int(data.get("day_of_week"))
+        if not 0 <= day_of_week <= 6:
+            raise ValueError("day_of_week must be between 0 (Monday) and 6 (Sunday)")
+        is_closed = bool(data.get("is_closed"))
+        open_time = _optional_time(data.get("open_time"))
+        close_time = _optional_time(data.get("close_time"))
+        raw_interval = data.get("slot_interval_minutes")
+        interval = int(raw_interval) if raw_interval not in (None, "") else None
+
+        rows = await schedule_service.list_weekly_schedules(
+            db, org.id,
+            scope_level=ScheduleScopeLevel.ORGANIZATION, scope_id=org.id,
+        )
+        existing = next(
+            (r for r in rows if r.day_of_week == day_of_week), None
+        )
+        if is_closed:
+            payload = {"is_closed": True}
+        else:
+            payload = {
+                "open_time": open_time,
+                "close_time": close_time,
+            }
+            if interval is not None:
+                payload["slot_interval_minutes"] = interval
+        if existing is None:
+            payload.update({
+                "scope_level": ScheduleScopeLevel.ORGANIZATION.value,
+                "scope_id": org.id,
+                "day_of_week": day_of_week,
+            })
+            row = await schedule_service.create_weekly_schedule(db, org.id, payload)
+        else:
+            row = await schedule_service.update_weekly_schedule(
+                db, org.id, existing.id, payload
+            )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"data": _weekly_row_json(row)})
+
+
+@router.post("/schedule/weekly/delete")
+async def schedule_weekly_delete(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    data = await request.json()
+    try:
+        day_of_week = int(data.get("day_of_week"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Invalid weekday"}, status_code=400)
+    rows = await schedule_service.list_weekly_schedules(
+        db, org.id,
+        scope_level=ScheduleScopeLevel.ORGANIZATION, scope_id=org.id,
+    )
+    existing = next((r for r in rows if r.day_of_week == day_of_week), None)
+    if existing is None:
+        return JSONResponse(
+            {"error": "No schedule row published for this weekday"}, status_code=404
+        )
+    try:
+        await schedule_service.delete_weekly_schedule(db, org.id, existing.id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"data": {"deleted": True}})
+
+
+@router.post("/schedule/exception/create")
+async def schedule_exception_create(request: Request, db: AsyncSession = Depends(get_db)):
+    """Create one organization-scope schedule exception (holiday calendar)."""
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    data = await request.json()
+    try:
+        payload = {
+            "scope_level": ScheduleScopeLevel.ORGANIZATION.value,
+            "scope_id": org.id,
+            "exception_date": dt_date.fromisoformat(str(data["exception_date"])),
+            "exception_type": str(data["exception_type"]),
+            "reason": str(data.get("reason", "")).strip(),
+        }
+        if not payload["reason"]:
+            raise ValueError("A user-facing reason is required for exceptions")
+        opens_at = _optional_time(data.get("opens_at"))
+        closes_at = _optional_time(data.get("closes_at"))
+        raw_factor = data.get("capacity_factor")
+        if opens_at is not None:
+            payload["opens_at"] = opens_at
+        if closes_at is not None:
+            payload["closes_at"] = closes_at
+        if raw_factor not in (None, ""):
+            try:
+                payload["capacity_factor"] = Decimal(str(raw_factor).strip())
+            except InvalidOperation:
+                raise ValueError("capacity_factor must be a decimal (0 < f <= 1)")
+        row = await schedule_service.create_schedule_exception(db, org.id, payload)
+    except (ValueError, KeyError) as e:
+        return JSONResponse(
+            {"error": str(e) if isinstance(e, ValueError) else "exception_date is required"},
+            status_code=400,
+        )
+    return JSONResponse({"data": _exception_row_json(row)})
+
+
+@router.post("/schedule/exception/{exception_id}/delete")
+async def schedule_exception_delete(
+    exception_id: int, request: Request, db: AsyncSession = Depends(get_db)
+):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        await schedule_service.delete_schedule_exception(db, org.id, exception_id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return JSONResponse({"data": {"deleted": True}})
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
 
 @router.get("/services", response_class=HTMLResponse)
@@ -396,6 +609,13 @@ async def payments_page(
     # template was crashing on format(total_revenue) with TypeError.
     total_revenue = await payment_service.get_org_total_revenue(db, org.id)
 
+    # Phase 5: Derived Ledger totals, Cash Reconciliation, Payouts & Bank Account
+    ledger_totals = await ledger_service.get_ledger_totals(db, org.id)
+    ledger_entries, _ = await ledger_service.get_ledger_entries(db, org.id, per_page=15)
+    cash_report = await cash_service.get_financial_breakdown_report(db, org.id)
+    payouts, _ = await payout_service.list_payouts(db, org.id, per_page=10)
+    bank_account = await bank_account_service.get_bank_account(db, org.id)
+
     return templates.TemplateResponse("org/payments.html", {
         "request": request,
         "current_org": org,
@@ -405,6 +625,11 @@ async def payments_page(
         "total_revenue": total_revenue,
         "page": page,
         "pages": math.ceil(total / per_page) if total else 1,
+        "ledger_totals": ledger_totals,
+        "ledger_entries": ledger_entries,
+        "cash_report": cash_report,
+        "payouts": payouts,
+        "bank_account": bank_account,
     })
 
 
@@ -647,6 +872,40 @@ async def employees_page(request: Request, db: AsyncSession = Depends(get_db)):
             "employees_json": employees_json,
             "available_roles": available_roles,
             "emp_roles_map": emp_roles_map,
+        },
+    )
+
+
+# ── Shifts & Kiosks HTML Pages ────────────────────────────────────────────────
+
+@router.get("/shifts", response_class=HTMLResponse)
+async def shifts_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+    return templates.TemplateResponse(
+        "org/shifts.html",
+        {
+            "request": request,
+            "current_org": org,
+            "active_page": "shifts",
+        },
+    )
+
+
+@router.get("/kiosks", response_class=HTMLResponse)
+async def kiosks_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+    branches = await branch_service.list_branches(db, org.id)
+    return templates.TemplateResponse(
+        "org/kiosks.html",
+        {
+            "request": request,
+            "current_org": org,
+            "active_page": "kiosks",
+            "branches": branches,
         },
     )
 

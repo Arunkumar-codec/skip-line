@@ -434,6 +434,110 @@ async def change_password_submit(request: Request, db: AsyncSession = Depends(ge
     return RedirectResponse("/admin/change-password?success=1", status_code=302)
 
 
+# ── Financial Management (Phase 5: FIN-001..004, LED-004) ─────────────────────
+# Payout review (hold/release/disburse), risk-flag review, bank-account
+# verification queue (FIN-002) and ledger-derived financial overview.
+# All actions POST to the existing /admin finance APIs — no business logic
+# is duplicated in the view or template.
+
+from app.services import bank_account_service, financial_risk_service, ledger_service, payout_service  # noqa: E402
+from models.finance import BankAccountStatus, PayoutStatus
+from models.finance import FinancialRiskFlag  # noqa: F401 — mapper registration
+
+
+@router.get("/finance", response_class=HTMLResponse)
+async def finance_page(
+    request: Request,
+    page: int = 1,
+    status: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redir = await _get_admin_or_redirect(request, db)
+    if redir:
+        return redir
+
+    pc = await _pending_count(db)
+
+    payouts, payouts_total = await payout_service.list_payouts(
+        db, status=status, page=page, per_page=20
+    )
+    payout_counts = {}
+    for payout_status in PayoutStatus:
+        _, sub_total = await payout_service.list_payouts(
+            db, status=payout_status.value, page=1, per_page=1
+        )
+        payout_counts[payout_status.value] = sub_total
+
+    # Organization names for the current payout page
+    org_ids = []
+    for p in payouts:
+        if p.organization_id not in org_ids:
+            org_ids.append(p.organization_id)
+    payout_org_names = {}
+    payout_org_totals = {}
+    if org_ids:
+        org_rows = (await db.execute(
+            select(Organization.id, Organization.name).where(
+                Organization.id.in_(org_ids)
+            )
+        )).all()
+        payout_org_names = {row[0]: row[1] for row in org_rows}
+        # LED-004: overview rows derived from ledger entries only
+        for oid in org_ids:
+            payout_org_totals[oid] = await ledger_service.get_ledger_totals(
+                db, organization_id=oid
+            )
+
+    # Open risk flags are the review queue; resolved/dismissed stay in audit.
+    flags, flags_total = await financial_risk_service.list_risk_flags(
+        db, status="flagged", page=1, per_page=20
+    )
+    flag_org_names = {}
+    if flags:
+        flag_org_ids = []
+        for f in flags:
+            if f.organization_id not in flag_org_ids:
+                flag_org_ids.append(f.organization_id)
+        flag_rows = (await db.execute(
+            select(Organization.id, Organization.name).where(
+                Organization.id.in_(flag_org_ids)
+            )
+        )).all()
+        flag_org_names = {row[0]: row[1] for row in flag_rows}
+
+    pending_accounts, pending_accounts_total = await bank_account_service.list_bank_accounts(
+        db, status=BankAccountStatus.PENDING_VERIFICATION.value, page=1, per_page=20
+    )
+
+    # FIN-001 payment control: policy editor org list (id, name)
+    policy_orgs = (await db.execute(
+        select(Organization.id, Organization.name)
+        .order_by(Organization.name)
+    )).all()
+
+    return templates.TemplateResponse("admin/finance.html", {
+        "request": request,
+        "current_admin": admin,
+        "active_page": "finance",
+        "pending_count": pc,
+        "payouts": payouts,
+        "payout_org_names": payout_org_names,
+        "payout_org_totals": payout_org_totals,
+        "payouts_total": payouts_total,
+        "payout_counts": payout_counts,
+        "payout_status_filter": status,
+        "page": page,
+        "payout_pages": math.ceil(payouts_total / 20) if payouts_total else 1,
+        "flags": flags,
+        "flag_org_names": flag_org_names,
+        "flags_total": flags_total,
+        "pending_accounts": pending_accounts,
+        "pending_accounts_total": pending_accounts_total,
+        "policy_orgs": policy_orgs,
+        "now": datetime.now(timezone.utc),
+    })
+
+
 # ── Logout ────────────────────────────────────────────────────────────────────
 
 @router.get("/logout")

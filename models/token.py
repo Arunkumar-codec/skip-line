@@ -13,11 +13,13 @@ Status lifecycle:
 import enum
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from models.capacity_rule import BookingSource
 from models.mixins import TimestampMixin
+from models.weekly_schedule import _enum_values
 
 
 class TokenStatus(str, enum.Enum):
@@ -47,6 +49,22 @@ class Token(Base, TimestampMixin):
         Integer, ForeignKey("services.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Appointment slot for slot-mode bookings (Decision 10).
+    # NULL for day-queue tokens (all legacy/Phase 1-2 tokens stay valid).
+    slot_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("time_slots.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    # Issuing channel (SCH-004 source-based allocation; CTR-003). Set
+    # server-side by each booking route — never trusted from client
+    # input. Legacy rows default to walk_in counters from Phase 1-2.
+    booking_source: Mapped[str] = mapped_column(
+        Enum(BookingSource, values_callable=_enum_values),
+        nullable=False,
+        default=BookingSource.WALK_IN,
+        server_default=BookingSource.WALK_IN.value,
+    )
+
     # Display identifier, e.g. "A-023"
     token_number: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
 
@@ -68,6 +86,11 @@ class Token(Base, TimestampMixin):
     qr_code_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     receipt_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Channel-supplied idempotency reference (KSK-005 / PHY-001): a retried
+    # kiosk or walk-in booking with the same reference returns the SAME
+    # token instead of issuing a duplicate after a printer/network failure.
+    client_reference: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
     # Payment snapshot (denormalised for fast receipt generation)
     amount_paid: Mapped[Decimal] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")
@@ -79,6 +102,21 @@ class Token(Base, TimestampMixin):
     completed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # FIN-001: Admin-initiated pause of a PAID booking. Pausing flips the
+    # token to the existing TokenStatus.ON_HOLD (queue/display semantics
+    # reused; capacity stays consumed per Open Decision 16) while keeping
+    # the operator's previous status so resume restores it exactly.
+    # Only tokens with amount_paid > 0 in WAITING/CALLED/IN_PROGRESS can
+    # be paused; while this flag is set, operators cannot call/progress/
+    # complete the token from any endpoint.
+    payment_hold: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    payment_hold_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payment_hold_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payment_hold_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_hold_previous_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Relationships
     organization: Mapped["Organization"] = relationship(
@@ -92,6 +130,9 @@ class Token(Base, TimestampMixin):
     )
     service: Mapped["Service | None"] = relationship(
         "Service", back_populates="tokens"
+    )
+    slot: Mapped["TimeSlot | None"] = relationship(
+        "TimeSlot", foreign_keys=[slot_id]
     )
     history: Mapped[list["TokenHistory"]] = relationship(
         "TokenHistory", back_populates="token", cascade="all, delete-orphan",
