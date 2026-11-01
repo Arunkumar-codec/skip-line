@@ -245,3 +245,113 @@ async def test_stop_releases_resources(broker_and_stubs):
     assert bus._listener_task is None
     assert bus._client is None
     assert bus._handlers == []
+
+
+# ── Credential redaction in logs (URL hardening) ─────────────────────────────
+
+def test_safe_redis_endpoint_redacts_every_credential_component():
+    from app.websocket.bus import safe_redis_endpoint
+
+    with_password = safe_redis_endpoint("redis://:s3cret@redis.internal:6380/7")
+    assert with_password == "redis://redis.internal:6380/7"
+    assert "s3cret" not in with_password
+
+    with_user_and_password = safe_redis_endpoint(
+        "rediss://admin:p4sswowrd!@cache.example.com:6379/0"
+    )
+    assert "admin" not in with_user_and_password
+    assert "p4sswowrd" not in with_user_and_password
+    assert with_user_and_password == "rediss://cache.example.com:6379/0"
+
+    with_query = safe_redis_endpoint("redis://:pw@h:6379/2?ssl_cert_reqs=none")
+    assert "pw" not in with_query and "ssl_cert_reqs" not in with_query
+    assert with_query == "redis://h:6379/2"
+
+
+def test_safe_redis_endpoint_handles_malformed_urls_safely():
+    from app.websocket.bus import safe_redis_endpoint
+
+    # malformed inputs must never raise and never echo secrets
+    assert safe_redis_endpoint("") == "redis://<unspecified-host>"
+    assert safe_redis_endpoint("not a url") == "redis://<unspecified-host>"
+    # schemeless input whose "path" contains credential text must never echo it
+    leaked = safe_redis_endpoint("user:pw@host/x")
+    assert "pw" not in leaked
+    assert safe_redis_endpoint("redis://:pass18346464646@h:99999999/0") ==\
+        "<invalid-redis-url>"
+    assert safe_redis_endpoint("redis://:pw@h:abc") == "<invalid-redis-url>"
+
+
+def test_redact_redis_credentials_removes_url_with_secrets():
+    from app.websocket.bus import redact_redis_credentials
+
+    leaked = "ConnectionError('Error 111 connecting to redis://:topsecret@10.0.0.5:6379. None')"
+    redacted = redact_redis_credentials(leaked)
+    assert "topsecret" not in redacted
+    assert "10.0.0.5" not in redacted
+    assert "<redacted-url>" in redacted
+    # plain URLs without credentials pass through untouched
+    assert redact_redis_credentials("redis://host:6379") == "redis://host:6379"
+
+
+async def test_connection_log_never_contains_the_configured_url(broker_and_stubs):
+    """Regression: the listener's 'connected' log uses the redacted endpoint."""
+    import loguru
+
+    broker = broker_and_stubs
+    secret_url = "redis://bus_user:super_secret@fake-internal/0"
+    lines: list[str] = []
+
+    sink_id = loguru.logger.add(
+        lambda msg: lines.append(str(msg).strip())
+    )
+    bus = RedisBus(secret_url, reconnect_interval=0.01)
+    try:
+        await bus.start()
+        assert await _pump_until(lambda: bool(broker.subscribers))
+        assert await _pump_until(
+            lambda: any("Redis bus connected" in line for line in lines)
+        )
+        connected = next(line for line in lines if "Redis bus connected" in line)
+        # the endpoint is logged, but neither credentials nor the raw URL
+        assert "redis://fake-internal/0" in connected
+        assert "super_secret" not in connected
+        assert "bus_user" not in connected
+        assert secret_url not in connected
+    finally:
+        loguru.logger.remove(sink_id)
+        await bus.stop()
+
+
+async def test_listener_failure_log_never_contains_the_configured_url(
+    broker_and_stubs,
+):
+    """Regression: fallback/reconnect failure logs never echo secrets."""
+    import loguru
+
+    broker = broker_and_stubs
+    secret_url = "redis://bus_user:super_secret@fake-internal/0"
+    lines: list[str] = []
+
+    sink_id = loguru.logger.add(lambda msg: lines.append(str(msg).strip()))
+    bus = RedisBus(secret_url, reconnect_interval=0.01)
+
+    class _ExplodingBroker(FakeBroker):
+        async def publish(self, channel, data):
+            # mimic redis-py raising with the credential-bearing URL embedded
+            raise ConnectionError(
+                "Error connecting to redis://bus_user:super_secret@fake-internal"
+            )
+
+    broker.__class__ = _ExplodingBroker
+    try:
+        await bus.start()
+        # publishing path that raises → logged inside connection error
+        await bus.publish(f"{CHANNEL_PREFIX}org:1", "boom")
+        await bus.stop()
+        await asyncio.sleep(0.05)
+        joined = "\n".join(lines)
+        assert "super_secret" not in joined, joined
+    finally:
+        loguru.logger.remove(sink_id)
+        broker.__class__ = FakeBroker

@@ -378,9 +378,22 @@ function renderDisplay(data) {
     card.classList.toggle('is-active', !!nowToken);
 
     if (upcomingEl) {
-      upcomingEl.innerHTML = c.upcoming_tokens?.length
-        ? c.upcoming_tokens.slice(0,4).map(t => `<span class="upcoming-chip">${t}</span>`).join('')
-        : '<span class="text-muted small">Queue empty</span>';
+      // Upcoming tokens come from the live WebSocket feed and are treated as
+      // untrusted — build DOM nodes with textContent, never interpolate HTML.
+      upcomingEl.textContent = '';
+      if (c.upcoming_tokens?.length) {
+        c.upcoming_tokens.slice(0, 4).forEach((t) => {
+          const chip = document.createElement('span');
+          chip.className = 'upcoming-chip';
+          chip.textContent = t;
+          upcomingEl.appendChild(chip);
+        });
+      } else {
+        const empty = document.createElement('span');
+        empty.className = 'text-muted small';
+        empty.textContent = 'Queue empty';
+        upcomingEl.appendChild(empty);
+      }
     }
   });
 

@@ -27,7 +27,9 @@ Channels (pattern `skipline:ws:*`):
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Awaitable, Callable, Optional
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -35,6 +37,40 @@ CHANNEL_PREFIX = "skipline:ws:"
 
 Handler = Callable[[str, bytes], Awaitable[None]]
 """async (channel, raw_message) → deliver to local sockets."""
+
+
+def safe_redis_endpoint(url: str) -> str:
+    """Loggable connection summary — host, port, and database number only.
+
+    Never includes the username, password, or query string that may be
+    embedded in the configured URL. Handles malformed URLs (including ports
+    outside int range, which raise ValueError inside urlsplit) without ever
+    echoing the raw input.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or "<unspecified-host>"
+        db = parts.path.lstrip("/")
+        scheme = parts.scheme or "redis"
+        # schemeless input is not parsed as a URL: the "path" could carry the
+        # credential text room, so never echo it without an authority
+        if not parts.netloc or "@" in db:
+            return f"{scheme}://<unspecified-host>"
+        if parts.port is not None:
+            base = f"{scheme}://{host}:{parts.port}"
+        else:
+            base = f"{scheme}://{host}"
+        return f"{base}/{db}" if db else base
+    except Exception:
+        return "<invalid-redis-url>"
+
+
+_CRED_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/]*@[^\s]*")
+
+
+def redact_redis_credentials(text: str) -> str:
+    """Strip `scheme://[user[:pass]@]host...` segments that may carry secrets."""
+    return _CRED_URL_RE.sub("<redacted-url>", text)
 
 
 def org_channel(org_id: int) -> str:
@@ -137,7 +173,7 @@ class RedisBus:
             # reaches its own sockets; other workers resync on reconnect.
             logger.warning(
                 "Redis publish failed for {} — falling back to local delivery: {!r}",
-                channel, exc,
+                channel, redact_redis_credentials(repr(exc)),
             )
             await self._dispatch_local(channel, raw)
 
@@ -183,7 +219,10 @@ class RedisBus:
                 client = await self._ensure_client()
                 pubsub = client.pubsub()
                 await pubsub.psubscribe(f"{CHANNEL_PREFIX}*")
-                logger.info("Redis bus connected ({})", self._redis_url)
+                # Never log the raw URL: it may embed credentials.
+                logger.info(
+                    "Redis bus connected ({})", safe_redis_endpoint(self._redis_url)
+                )
                 delay = self._base_interval  # reset backoff on success
 
                 async for message in pubsub.listen():
@@ -204,7 +243,12 @@ class RedisBus:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("Redis bus listener error: {!r}", exc)
+                # Exception reprs may echo the configured URL (redis-py raises
+                # e.g. "Error connecting to redis://:password@host:6379...").
+                logger.warning(
+                    "Redis bus listener error: {!r}",
+                    redact_redis_credentials(repr(exc)),
+                )
             finally:
                 # Subscription cleanup: never leak pubsub connections.
                 if pubsub is not None:
