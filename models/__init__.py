@@ -46,6 +46,7 @@ from models.capacity_rule import CapacityRule              # noqa: F401
 from models.schedule_change import ScheduleChangePreview    # noqa: F401
 from models.counter_shift import CounterShift               # noqa: F401
 from models.kiosk_device import KioskDevice                 # noqa: F401
+from models.token_scan import TokenScan                     # noqa: F401
 from models.finance import (                                # noqa: F401
     LedgerEntry,
     CashSession,
@@ -95,6 +96,7 @@ __all__ = [
     "ScheduleChangePreview",
     "CounterShift",
     "KioskDevice",
+    "TokenScan",
     "LedgerEntry",
     "CashSession",
     "Refund",

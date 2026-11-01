@@ -4,10 +4,11 @@ app/routers/tokens.py
 Token-specific endpoints: PDF receipt download, QR code, receipt generation.
 """
 
-from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -35,21 +36,54 @@ async def download_receipt(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate (or return cached) PDF receipt for a token."""
+    """Generate (or return cached) PDF receipt for a token (QR-001)."""
     token = await db.get(Token, token_id)
     if not token:
         raise HTTPException(status_code=404, detail="Token not found")
     await _assert_token_access(token, user)
 
-    # Return cached receipt if it exists
-    if token.receipt_path and Path(token.receipt_path).exists():
-        return FileResponse(token.receipt_path, media_type="application/pdf",
-                            filename=f"receipt_{token.token_number}.pdf")
-
-    # Generate receipt
+    # Always produce a receipt whose QR embeds the current signed reference —
+    # cached receipts from before the signed-QR upgrade carry the obsolete
+    # plaintext token-id URL and tracking state (position) changes over time.
+    # Generation overwrites the cached file in place (no data loss).
     org = await db.get(Organization, token.organization_id)
     counter = await db.get(Counter, token.counter_id)
     service = await db.get(Service, token.service_id) if token.service_id else None
+    branch = getattr(counter, "branch", None)
+
+    slot_label: Optional[str] = None
+    if token.slot_id:
+        from models.time_slot import TimeSlot
+        slot = await db.get(TimeSlot, token.slot_id)
+        if slot:
+            slot_label = (
+                f"{slot.slot_date.strftime('%d %b %Y')} · "
+                f"{slot.start_time.strftime('%H:%M')}–{slot.end_time.strftime('%H:%M')}"
+            )
+
+    # Payment state (most recent payment for this token).
+    payment_label: Optional[str] = None
+    if token.amount_paid and token.amount_paid > 0:
+        from models.payment import Payment
+        result = await db.execute(
+            select(Payment)
+            .where(Payment.token_id == token.id)
+            .order_by(Payment.created_at.desc())
+            .limit(1)
+        )
+        payment = result.scalars().first()
+        if payment:
+            payment_label = str(
+                payment.status.value if hasattr(payment.status, "value") else payment.status
+            )
+
+    # Regenerate the QR each render so the receipt always embeds a signed
+    # reference that the tracking page verifies independently of the PDF.
+    qr_path = await qr_generator.generate_token_qr(
+        token_id=token.id, org_id=token.organization_id,
+        counter_id=token.counter_id, user_id=token.user_id,
+    )
+    token.qr_code_path = qr_path
 
     receipt_path = await pdf_generator.generate_token_receipt(
         token_id=token.id,
@@ -61,6 +95,14 @@ async def download_receipt(
         booked_at=token.booked_at or token.created_at,
         qr_code_path=token.qr_code_path,
         guest_name=token.guest_name,
+        branch_name=getattr(branch, "name", None) if branch else None,
+        slot_label=slot_label,
+        payment_label=payment_label,
+        instructions=(
+            f"Note your token number {token.token_number}. When it is displayed "
+            "or called, proceed to the counter named on this receipt. "
+            "Scan the QR to track live."
+        ),
     )
 
     token.receipt_path = receipt_path
@@ -76,16 +118,14 @@ async def download_qr(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the QR code image for a token."""
+    """Return the QR code image for a token (regenerated — QR-002)."""
     token = await db.get(Token, token_id)
     if not token:
         raise HTTPException(status_code=404, detail="Token not found")
 
-    if token.qr_code_path and Path(token.qr_code_path).exists():
-        return FileResponse(token.qr_code_path, media_type="image/png",
-                            filename=f"qr_{token.token_number}.png")
-
-    # Regenerate if missing
+    # Always regenerate: QR payload is a signed opaque reference whose
+    # nonce/expiry must match the current signing scheme — older files
+    # (pre-signed-QR scheme) are invalid for tracking.
     from app.utils import qr_generator
     qr_path = await qr_generator.generate_token_qr(
         token_id=token.id, org_id=token.organization_id,

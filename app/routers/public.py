@@ -10,7 +10,9 @@ Public endpoints that require no authentication:
 from datetime import date as date_type
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -27,6 +29,9 @@ from app.schemas.organization import (
 )
 from app.schemas.token import KioskTokenRequest, TokenRead
 from app.services import kiosk_service, schedule_service, token_service
+from app.utils import signed_qr
+
+templates = Jinja2Templates(directory="templates")
 
 router = APIRouter()
 
@@ -112,30 +117,165 @@ async def kiosk_heartbeat(
 
 # ── Live display screen ───────────────────────────────────────────────────────
 
+async def _authorize_display(
+    db: AsyncSession, request: Request, org_id: int, key: Optional[str]
+) -> bool:
+    """
+    Decision 20: a public display (read-only registered device) must present
+    a valid display-access-key. An authenticated organization session for
+    this exact org is accepted too, so operator preview works unchanged.
+    """
+    if key:
+        from app.services import display_access_service
+
+        if await display_access_service.is_key_installed(db, org_id, key):
+            return True
+        return False
+
+    from app.utils.jwt import decode_token
+    from models.organization import Organization, OrgStatus
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+    else:
+        token = request.cookies.get("org_token")
+    if not token:
+        return False
+    payload = decode_token(token)
+    if not payload or payload.get("role") != "organization":
+        return False
+    try:
+        org = await db.get(Organization, int(payload.get("sub")))
+    except (TypeError, ValueError):
+        return False
+    return bool(org) and org.id == org_id and org.status == OrgStatus.APPROVED
+
+
+def _display_unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail="Display access key required (Decision 20)",
+    )
+
+
 @router.get("/display/{org_id}", response_model=APIResponse)
-async def display_screen(org_id: int, db: AsyncSession = Depends(get_db)):
+async def display_screen(
+    org_id: int,
+    request: Request,
+    key: Optional[str] = Query(default=None, description="Display access key"),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Returns current counter state for the public display screen.
     The display page subscribes to WebSocket for real-time updates;
-    this endpoint provides the initial data load.
+    this endpoint provides the initial data load. Authorized with a
+    display-access-key (install/rotate via the org portal) or the
+    organization session.
     """
+    if not await _authorize_display(db, request, org_id, key):
+        raise _display_unauthorized()
     data = await token_service.get_display_data(db, org_id)
     return APIResponse(data=data)
 
 
-# ── Token tracking (via QR scan) ──────────────────────────────────────────────
+# ── Public TV display page (keyed install) ───────────────────────────────────
 
-@router.get("/track/{token_id}", response_model=APIResponse)
-async def track_token(token_id: int, db: AsyncSession = Depends(get_db)):
+@router.get("/display-view/{org_id}", response_class=HTMLResponse)
+async def display_view_page(
+    org_id: int,
+    request: Request,
+    key: str = Query(description="Display access key (Decision 20)"),
+    mute: str = "",
+    fs: str = "",
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Live tracking for a specific token.
-    Accessible without login — QR code on the receipt links here.
+    Public TV display for installed screens: the only way a screen without
+    an operator session renders the queue display. Requires and carries the
+    display-access-key into all subsequent WS/API calls.
     """
+    if not await _authorize_display(db, request, org_id, key):
+        raise _display_unauthorized()
+
+    from models.organization import Organization
+
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    display_data = await token_service.get_display_data(db, org_id)
+    return templates.TemplateResponse("public/display.html", {
+        "request": request,
+        "org_id": org_id,
+        "org_name": org.name,
+        "display_data": display_data,
+        "announcement": display_data.get("announcement", ""),
+        "ticker_text": display_data.get("announcement", ""),
+        "display_key": key,
+        "auto_fullscreen": fs == "1",
+        "audio_muted": mute == "1",
+    })
+
+
+# ── Token tracking (via signed QR scan) ──────────────────────────────────────
+
+@router.get("/track/{ref}", response_class=HTMLResponse)
+async def track_page(ref: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Public live-tracking page (Release Gate 6). The reference is the
+    HMAC-signed opaque value from the token QR; internal token ids are
+    never accepted. Tampered/never-issued/expired refs render the same
+    uninformative error so no token can be probed.
+    """
+    status, payload = signed_qr.verify_token_ref(ref, signed_qr.PURPOSE_TRACK)
+    if status != signed_qr.STATUS_VALID:
+        return HTMLResponse("<h3>Invalid or expired token link</h3>", status_code=404)
+
+    from models.organization import Organization
+    from models.token import Token
+
+    token = await db.get(Token, payload.token_id)
+    if not token or token.organization_id != payload.org_id:
+        return HTMLResponse("<h3>Invalid or expired token link</h3>", status_code=404)
+
+    org = await db.get(Organization, token.organization_id)
     try:
-        data = await token_service.get_token_tracking(db, token_id)
+        tracking = await token_service.get_token_tracking(db, payload.token_id)
+    except ValueError:
+        return HTMLResponse("<h3>Invalid or expired token link</h3>", status_code=404)
+
+    return templates.TemplateResponse("public/track.html", {
+        "request": request,
+        "ws_ref": ref,
+        "token_number": tracking["token_number"],
+        "org_name": org.name if org else "Organization",
+        "tracking": tracking,
+    })
+
+
+@router.get("/tracking/{ref}", response_model=APIResponse)
+async def track_token(ref: str, db: AsyncSession = Depends(get_db)):
+    """
+    Live tracking JSON for a specific token, addressed by its signed
+    opaque reference (QR-002). Expired/tampered refs return 404 without
+    distinguishing between states.
+    """
+    status, payload = signed_qr.verify_token_ref(ref, signed_qr.PURPOSE_TRACK)
+    if status != signed_qr.STATUS_VALID:
+        raise HTTPException(status_code=404, detail="Invalid or expired token link")
+
+    from models.token import Token
+
+    token = await db.get(Token, payload.token_id)
+    if not token or token.organization_id != payload.org_id:
+        raise HTTPException(status_code=404, detail="Invalid or expired token link")
+
+    try:
+        data = await token_service.get_token_tracking(db, payload.token_id)
         return APIResponse(data=data)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Invalid or expired token link")
 
 
 # ── Organization info (public listing) ────────────────────────────────────────

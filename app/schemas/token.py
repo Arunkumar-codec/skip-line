@@ -3,7 +3,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from models.token import TokenStatus
 
 
@@ -39,6 +39,19 @@ class TokenActionRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class TokenScanRequest(BaseModel):
+    """Authorized scanner check-in (QR-003).
+
+    `ref` is the HMAC-signed opaque reference decoded from the QR image;
+    `counter_id` is the desk counter the scanner operates (must hold an
+    active approved shift); `device_id` optionally names the scanner device
+    for the QR-005 audit trail.
+    """
+    ref: str = Field(min_length=8, max_length=512)
+    counter_id: Optional[int] = None
+    device_id: Optional[str] = None
+
+
 class TokenRead(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -60,6 +73,7 @@ class TokenRead(BaseModel):
     booked_at: Optional[datetime]
     called_at: Optional[datetime]
     completed_at: Optional[datetime]
+    checked_in_at: Optional[datetime] = None
     created_at: datetime
 
 

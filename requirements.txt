@@ -12,6 +12,9 @@ tzdata==2026.6                   # IANA time zones for zoneinfo (SCH-009; requir
 alembic==1.13.1                  # schema migrations
 pymysql==1.1.1                   # sync driver used by Alembic CLI
 
+redis==5.0.4                     # WebSocket pub/sub fan-out (optional at runtime;
+                                 # only required when REDIS_URL is configured)
+
 # ── Authentication & security ──────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0  # JWT (RS256 / HS256)
 passlib[bcrypt]==1.7.4            # password hashing

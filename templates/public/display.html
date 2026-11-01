@@ -138,6 +138,51 @@
     .ws-indicator { display: flex; align-items: center; gap: 6px; }
     .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
     .ws-dot.offline { background: #ef4444; animation: none; }
+
+    /* ── Phase 6 TV additions ─────────────────────────────────────────── */
+
+    /* Configurable ticker banner (marquee scrolling) */
+    .ticker { overflow: hidden; white-space: nowrap; flex: 1; }
+    .ticker-inner {
+      display: inline-block;
+      padding-left: 100%;
+      animation: tickerScroll 28s linear infinite;
+    }
+    @keyframes tickerScroll {
+      0%   { transform: translateX(0); }
+      100% { transform: translateX(-100%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ticker-inner { animation: none; padding-left: 0; }
+    }
+
+    /* Fullscreen toggle */
+    .fs-btn {
+      position: fixed; top: 12px; right: 12px; z-index: 50;
+      background: rgba(30,41,59,.85); color: #94a3b8;
+      border: 1px solid #334155; border-radius: 10px;
+      padding: 8px 10px; font-size: .9rem; cursor: pointer;
+    }
+    .fs-btn:hover { color: #f1f5f9; border-color: #64748b; }
+    body.hide-cursor { cursor: none; }
+
+    /* Stale-data badge: no WebSocket update for >90s */
+    .stale-badge {
+      display: none;
+      background: #7f1d1d; color: #fecaca;
+      border-radius: 8px; padding: 2px 10px; font-weight: 700;
+    }
+    .stale-badge.show { display: inline-block; }
+
+    /* Responsive TV scaling: bigger cards on large screens */
+    @media (min-width: 1600px) {
+      .current-token-display { font-size: 7.5rem; }
+      .counters-grid { padding: 32px 48px; gap: 32px; }
+    }
+    @media (max-width: 900px) {
+      .current-token-display { font-size: 3.6rem; }
+      .counters-grid { padding: 16px; gap: 14px; }
+    }
   </style>
 </head>
 <body>
@@ -154,10 +199,10 @@
   </div>
 </div>
 
-<!-- Announcement -->
+<!-- Announcement / configurable ticker banner -->
 <div class="announcement-bar" id="announcementBar">
   <i class="bi bi-megaphone-fill icon"></i>
-  <span id="announcementText">{{ announcement or 'Welcome — please take a token and wait for your number to be called.' }}</span>
+  <div class="ticker"><span class="ticker-inner" id="tickerText">{{ ticker_text or announcement or 'Welcome — please take a token and wait for your number to be called.' }}</span></div>
 </div>
 
 <!-- Counters grid -->
@@ -184,12 +229,17 @@
   {% endfor %}
 </div>
 
+<!-- Fullscreen toggle -->
+<button class="fs-btn" id="fsBtn" title="Toggle fullscreen"><i class="bi bi-arrows-fullscreen"></i></button>
+
 <!-- Footer -->
 <div class="display-footer">
   <div>Skip Line — Digital Queue Management</div>
   <div class="ws-indicator">
+    <span class="stale-badge" id="staleBadge">No update for a while — retrying…</span>
     <div class="ws-dot" id="wsDot"></div>
     <span id="wsLabel">Connecting…</span>
+    <span id="lastUpdate" style="opacity:.6"></span>
   </div>
   <div>Scan QR on your token to track live</div>
 </div>
@@ -197,7 +247,11 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="/static/js/main.js"></script>
 <script>
-const ORG_ID = {{ org_id }};
+const ORG_ID        = {{ org_id }};
+const DISPLAY_KEY   = {{ display_key | tojson if display_key else "''" }};
+const AUDIO_MUTED   = {{ 'true' if audio_muted else 'false' }};
+const AUTO_FS       = {{ 'true' if auto_fullscreen else 'false' }};
+const KEYQS         = DISPLAY_KEY ? `?key=${encodeURIComponent(DISPLAY_KEY)}` : '';
 
 // ── Clock ─────────────────────────────────────────────────────────────────
 function updateClock() {
@@ -210,20 +264,94 @@ function updateClock() {
 updateClock();
 setInterval(updateClock, 1000);
 
+// ── Fullscreen toggle (+ optional auto-fullscreen for installed TVs) ──────
+const fsBtn = document.getElementById('fsBtn');
+fsBtn.addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+});
+document.addEventListener('fullscreenchange', () => {
+  document.body.classList.toggle('hide-cursor', !!document.fullscreenElement);
+});
+if (AUTO_FS) {
+  // Browsers usually require one user gesture; try immediately and keep
+  // retrying on first interaction so TV installers get an obvious path.
+  document.documentElement.requestFullscreen?.().catch(() => {});
+  ['click', 'keydown'].forEach(ev => document.addEventListener(ev, () => {
+    if (!document.fullscreenElement)
+      document.documentElement.requestFullscreen?.().catch(() => {});
+  }, { once: true }));
+}
+
+// ── Audio chime on new call (WebAudio — no external asset needed) ─────────
+let AudioCtx = null;
+function playChime() {
+  if (AUDIO_MUTED) return;
+  try {
+    AudioCtx = AudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = AudioCtx.currentTime;
+    [880, 1174.7].forEach((freq, i) => {
+      const osc = AudioCtx.createOscillator();
+      const gain = AudioCtx.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t0 + i * 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.5, t0 + i * 0.18 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.18 + 0.3);
+      osc.connect(gain).connect(AudioCtx.destination);
+      osc.start(t0 + i * 0.18); osc.stop(t0 + i * 0.18 + 0.32);
+    });
+  } catch (e) { /* audio blocked until user gesture — silently skip */ }
+}
+
 // ── WebSocket ─────────────────────────────────────────────────────────────
-const ws = createWebSocket(`/ws/org/${ORG_ID}`, onMsg, () => {
-  document.getElementById('wsDot').classList.remove('offline');
-  document.getElementById('wsLabel').textContent = 'Live';
+const wsDot   = document.getElementById('wsDot');
+const wsLabel = document.getElementById('wsLabel');
+const staleBadge = document.getElementById('staleBadge');
+const lastUpdateEl = document.getElementById('lastUpdate');
+let lastUpdateAt = Date.now();
+
+const ws = createWebSocket(`/ws/org/${ORG_ID}${KEYQS}`, onMsg, () => {
+  wsDot.classList.remove('offline');
+  wsLabel.textContent = 'Live';
+  lastUpdateAt = Date.now();
 });
 
 function onMsg(msg) {
   if (msg.type === 'display_update') renderDisplay(msg.data);
 }
 
+// ── Stale-data handling (DSP-003: authoritative refresh on reconnect) ─────
+setInterval(() => {
+  const stale = (Date.now() - lastUpdateAt) > 90_000;
+  staleBadge.classList.toggle('show', stale);
+  if (lastUpdateAt) {
+    const secs = Math.round((Date.now() - lastUpdateAt) / 1000);
+    lastUpdateEl.textContent = `updated ${secs < 60 ? secs + 's' : Math.round(secs/60) + 'm'} ago`;
+  }
+}, 5000);
+
+async function authoritativeRefresh() {
+  try {
+    const r = await fetch(`/public/display/${ORG_ID}${KEYQS}`);
+    if (r.status) {
+      if (!r.ok && r.status === 403) { wsDot.classList.add('offline'); return; }
+      const d = await r.json();
+      if (d.data) { renderDisplay(d.data); lastUpdateAt = Date.now(); }
+    }
+  } catch (_) {
+    wsDot.classList.add('offline');
+    wsLabel.textContent = 'Reconnecting…';
+  }
+}
+// Reconnect fallback poll: refresh authoritative state periodically.
+setInterval(authoritativeRefresh, 30_000);
+
 // ── Render ────────────────────────────────────────────────────────────────
+const lastCalled = {};   // counter_id → token text (chime triggers on change)
+
 function renderDisplay(data) {
-  if (data.announcement) {
-    document.getElementById('announcementText').textContent = data.announcement;
+  if (data.announcement && !document.getElementById('tickerText').dataset.locked) {
+    document.getElementById('tickerText').textContent = data.announcement;
   }
 
   (data.counters || []).forEach(c => {
@@ -232,15 +360,22 @@ function renderDisplay(data) {
     const upcomingEl = document.getElementById(`upcoming-${c.counter_id}`);
     if (!card) return;
 
+    const prev = lastCalled[c.counter_id];
+    const nowToken = c.current_token || null;
+
+    // Bell chime whenever a NEW token number reaches a counter (DSP-003).
+    if (nowToken && prev !== undefined && nowToken !== prev && nowToken !== '—') playChime();
+    if (nowToken) lastCalled[c.counter_id] = nowToken;
+
     // Flash if token changed
-    if (tokenEl && tokenEl.textContent.trim() !== (c.current_token || '—')) {
+    if (tokenEl && tokenEl.textContent.trim() !== (nowToken || '—')) {
       tokenEl.classList.remove('blink');
       void tokenEl.offsetWidth;
       tokenEl.classList.add('blink');
     }
 
-    if (tokenEl) tokenEl.textContent = c.current_token || '—';
-    card.classList.toggle('is-active', !!c.current_token);
+    if (tokenEl) tokenEl.textContent = nowToken || '—';
+    card.classList.toggle('is-active', !!nowToken);
 
     if (upcomingEl) {
       upcomingEl.innerHTML = c.upcoming_tokens?.length
@@ -248,18 +383,11 @@ function renderDisplay(data) {
         : '<span class="text-muted small">Queue empty</span>';
     }
   });
-}
 
-// Reconnect indicator
-setInterval(() => {
-  fetch(`/public/display/${ORG_ID}`)
-    .then(r => r.json())
-    .then(d => d.data && renderDisplay(d.data))
-    .catch(() => {
-      document.getElementById('wsDot').classList.add('offline');
-      document.getElementById('wsLabel').textContent = 'Reconnecting…';
-    });
-}, 30_000);
+  wsDot.classList.remove('offline');
+  wsLabel.textContent = 'Live';
+  lastUpdateAt = Date.now();
+}
 </script>
 </body>
 </html>

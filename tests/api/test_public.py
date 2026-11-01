@@ -21,11 +21,13 @@ async def test_landing_page_returns_html(client: AsyncClient):
 
 @pytest.mark.api
 async def test_display_screen_nonexistent_org(client: AsyncClient):
+    # Phase 6 (Decision 20): the display screen is now authorization-gated.
+    # The key/session check runs BEFORE the org-existence lookup, so an
+    # unauthenticated request for ANY org id — including one that does not
+    # exist — must get 403 without ever revealing whether the org exists.
+    # This also blocks probing valid org numbers through the display route.
     resp = await client.get("/public/display/999999")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "counters" in data["data"]
-    assert data["data"]["counters"] == []
+    assert resp.status_code == 403
 
 
 @pytest.mark.api

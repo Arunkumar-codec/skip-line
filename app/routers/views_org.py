@@ -219,18 +219,40 @@ async def queue_data(counter_id: int, request: Request, db: AsyncSession = Depen
 # ── Display screen ────────────────────────────────────────────────────────────
 
 @router.get("/display", response_class=HTMLResponse)
-async def display_page(request: Request, db: AsyncSession = Depends(get_db)):
+async def display_page(
+    request: Request,
+    key: str | None = None,
+    fs: str | None = None,
+    mute: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     org, redir = await _get_org_or_redirect(request, db)
     if redir:
         return redir
 
     display_data = await token_service.get_display_data(db, org.id)
+    from models.setting import Setting
+    from sqlalchemy import and_ as _and
+
+    ticker_result = await db.execute(
+        select(Setting.value).where(
+            _and(Setting.organization_id == org.id,
+                 Setting.key == "display_ticker_text")
+        )
+    )
+    ticker_text = ticker_result.scalar_one_or_none() or display_data.get("announcement", "")
     return templates.TemplateResponse("public/display.html", {
         "request": request,
         "org_id": org.id,
         "org_name": org.name,
         "display_data": display_data,
         "announcement": display_data.get("announcement", ""),
+        "ticker_text": ticker_text,
+        # Decision 20: a display-access-key supplied in the URL is echoed
+        # into the page so WS/API calls re-present it; absent = session mode.
+        "display_key": key or "",
+        "auto_fullscreen": fs == "1",
+        "audio_muted": mute == "1",
     })
 
 

@@ -291,6 +291,69 @@
       </form>
     </div>
   </div>
+
+  <div class="col-12">
+    <!-- QR-003..005: Authorized Camera Scanner -->
+    <div class="content-card p-4">
+      <div class="d-flex align-items-center justify-content-between border-bottom pb-3 mb-3">
+        <div class="d-flex align-items-center gap-2">
+          <div class="stat-icon green"><i class="bi bi-qr-code-scan"></i></div>
+          <div>
+            <h5 class="fw-700 mb-0">Token QR Scanner Check-In</h5>
+            <span class="text-xs text-muted">Scan printed/receipt QR — check-in + audit (QR-003..005)</span>
+          </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span class="badge bg-success d-none" id="scanStatusBadge">Ready</span>
+          <button class="btn btn-primary btn-sm fw-600" id="scanStartBtn" onclick="startScanner()">
+            <i class="bi bi-camera me-1"></i>Start Camera
+          </button>
+        </div>
+      </div>
+
+      <div class="row g-3 align-items-start">
+        <div class="col-md-5">
+          <div id="scannerWrap" class="position-relative rounded overflow-hidden border bg-dark d-none" style="aspect-ratio:4/3;max-width:360px">
+            <video id="scannerVideo" style="width:100%;height:100%;object-fit:cover" playsinline muted></video>
+            <div class="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+                 style="pointer-events:none">
+              <div style="width:70%;height:70%;border:2px dashed rgba(255,255,255,.6);border-radius:12px"></div>
+            </div>
+          </div>
+          <div id="scannerDenied" class="d-none" style="max-width:360px">
+            <div class="alert alert-danger btn-sm mb-1"><i class="bi bi-slash-circle me-1"></i><strong>Camera unavailable or permission denied.</strong>
+              <div class="text-xs">Allow camera access in your browser settings for this site, or type the code manually below.</div></div>
+          </div>
+          <div id="scannerLoading" class="d-none text-center py-2" style="max-width:360px">
+            <div class="spinner-border spinner-border-sm text-primary"></div>
+            <span class="text-xs text-muted ms-2">Starting camera…</span>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div id="scanResultPanel" class="d-none rounded p-3 border" role="status">
+            <div class="d-flex align-items-center gap-2">
+              <span id="scanResultIcon" class="fs-3"></span>
+              <div>
+                <div id="scanResultTitle" class="fw-700"></div>
+                <div id="scanResultDetail" class="text-xs text-muted"></div>
+              </div>
+            </div>
+          </div>
+          <div class="d-flex gap-2 mt-3">
+            <button class="btn btn-outline-secondary btn-sm" id="scanStopBtn" onclick="stopScanner(true)" disabled>
+              <i class="bi bi-stop-circle me-1"></i>Stop Camera
+            </button>
+            <button class="btn btn-outline-primary btn-sm d-none" id="scanRetryBtn" onclick="armForNextScan()">
+              <i class="bi bi-arrow-repeat me-1"></i>Scan Next Token
+            </button>
+          </div>
+          <div id="scanHistory" class="mt-3 text-xs text-muted" style="max-height:160px;overflow:auto">
+            <!-- QR-005 recent scan results for this session -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 {% endif %}
 
@@ -380,6 +443,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
 let currentActiveShiftId = {{ current_shift.id if current_shift else 'null' }};
 let currentCounterId = {{ current_shift.counter_id if current_shift else 'null' }};
@@ -634,6 +698,168 @@ document.addEventListener('DOMContentLoaded', () => {
     loadQueue(currentCounterId);
     setInterval(() => loadQueue(currentCounterId), 15000);
   }
+});
+
+// ── QR-003..005: Authorized camera scanner check-in ─────────────────────────
+// Decodes receipt QR frames (jsQR) and posts the signed opaque reference to
+// /employee/tokens/scan. A detection triggers exactly one POST; the loop
+// stays paused until the result is shown and the operator re-arms (or the
+// 3s auto-rearm fires), preventing repeated requests from a single scan.
+let scanStream      = null;
+let scanRequestInFlight = false;
+let scanArmed       = true;
+let scanRearmTimer  = null;
+
+async function startScanner() {
+  scanRequestInFlight = false;
+  scanArmed = true;
+  hideScanResult();
+  document.getElementById('scannerLoading').classList.remove('d-none');
+  document.getElementById('scannerDenied').classList.add('d-none');
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    const video = document.getElementById('scannerVideo');
+    video.srcObject = scanStream;
+    await video.play();
+    document.getElementById('scannerWrap').classList.remove('d-none');
+    document.getElementById('scannerLoading').classList.add('d-none');
+    document.getElementById('scanStartBtn').disabled = true;
+    document.getElementById('scanStopBtn').disabled = false;
+    setScanStatus('Scanning…', 'bg-primary');
+    scanTick();
+  } catch (err) {
+    document.getElementById('scannerLoading').classList.add('d-none');
+    document.getElementById('scannerDenied').classList.remove('d-none');
+    setScanStatus('Camera unavailable', 'bg-danger');
+  }
+}
+
+function stopScanner(keepMessage) {
+  if (scanStream) {
+    scanStream.getTracks().forEach(t => t.stop());
+    scanStream = null;
+  }
+  document.getElementById('scannerWrap').classList.add('d-none');
+  document.getElementById('scanStartBtn').disabled = false;
+  document.getElementById('scanStopBtn').disabled = true;
+  if (!keepMessage) setScanStatus('Stopped', 'bg-secondary');
+}
+
+function scanTick() {
+  if (!scanStream) return;
+  const video = document.getElementById('scannerVideo');
+  if (video.readyState === video.HAVE_ENOUGH_DATA && scanArmed && !scanRequestInFlight) {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    if (canvas.width && canvas.height) {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      let code = null;
+      try { code = jsQR(image.data, image.width, image.height); } catch (_) {}
+      if (code && code.data) {
+        handleScannedRef(code.data);
+      }
+    }
+  }
+  requestAnimationFrame(scanTick);
+}
+
+async function handleScannedRef(ref) {
+  if (scanRequestInFlight || !scanArmed || scanStream === null) return;
+  scanRequestInFlight = true;
+  scanArmed = false;
+  clearTimeout(scanRearmTimer);
+  setScanStatus('Verifying…', 'bg-warning');
+  const payload = ref.split('/').pop();  // full URL or bare ref both work
+  try {
+    const res = await apiRequest('/employee/tokens/scan', 'POST', {
+      ref: payload,
+      counter_id: currentCounterId,
+      device_id: 'employee-dashboard-camera',
+    });
+    const d = res.data || {};
+    showScanResult(d);
+    pushScanHistory(d);
+    setScanStatus('Result: ' + (d.result || 'unknown'), 'bg-info');
+  } catch (err) {
+    showScanResult({ result: 'error', message: err.message || 'Scan request failed' });
+    pushScanHistory({ result: 'error', message: err.message || 'Scan request failed' });
+    setScanStatus('Error', 'bg-danger');
+  }
+  // Auto re-arm shortly after the result is displayed.
+  showRetryButton();
+  scanRearmTimer = setTimeout(() => { scanRequestInFlight = false; armForNextScan(); }, 3000);
+}
+
+function armForNextScan() {
+  clearTimeout(scanRearmTimer);
+  scanRequestInFlight = false;
+  scanArmed = true;
+  hideScanResult();
+  showRetryButton();
+  setScanStatus('Scanning…', 'bg-primary');
+}
+
+function setScanStatus(text, cls) {
+  const badge = document.getElementById('scanStatusBadge');
+  if (!badge) return;
+  badge.className = 'badge ' + (cls || 'bg-secondary');
+  badge.style.display = '';
+  badge.textContent = text;
+}
+
+function showScanResult(d) {
+  const panel = document.getElementById('scanResultPanel');
+  const title = document.getElementById('scanResultTitle');
+  const detail = document.getElementById('scanResultDetail');
+  const icon  = document.getElementById('scanResultIcon');
+  const result = d.result || 'error';
+  const success = result === 'valid';
+  panel.style.display = '';
+  panel.classList.remove('d-none');
+  panel.style.borderColor = success ? '#22c55e'
+    : (result === 'already_checked_in' ? '#fbbf24' : '#ef4444');
+  icon.textContent = success ? '✅'
+    : (result === 'already_checked_in' ? '⚠️' : '❌');
+  title.textContent = {
+    valid: 'Check-in confirmed',
+    already_checked_in: 'Already checked in',
+    completed: 'Token already completed',
+    cancelled: 'Token cancelled',
+    skipped: 'Token skipped',
+    expired: 'QR expired — issue a new receipt',
+    wrong_org: 'QR belongs to another organization',
+    wrong_branch: 'QR belongs to another branch',
+    tampered: 'QR failed integrity verification',
+    invalid: 'Invalid QR code',
+    error: 'Scan failed',
+  }[result] || (d.message || 'Scan processed');
+  detail.textContent = d.token_number ? `Token ${d.token_number} · ${d.message || ''}` : (d.message || '');
+}
+
+function hideScanResult() {
+  document.getElementById('scanResultPanel').classList.add('d-none');
+}
+
+function showRetryButton() {
+  document.getElementById('scanRetryBtn').classList.remove('d-none');
+}
+
+function pushScanHistory(d) {
+  const box = document.getElementById('scanHistory');
+  const row = document.createElement('div');
+  row.className = 'border-bottom py-1';
+  row.textContent = `[${new Date().toLocaleTimeString()}] ${d.result || 'error'}${d.token_number ? ' · ' + d.token_number : ''}${d.message ? ' — ' + d.message : ''}`;
+  box.prepend(row);
+}
+
+window.addEventListener('pagehide', () => stopScanner(false));
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopScanner(false);
 });
 </script>
 {% endblock %}

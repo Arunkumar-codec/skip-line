@@ -253,9 +253,14 @@ async def track_page(token_id: int, request: Request, db: AsyncSession = Depends
     token = await db.get(Token, token_id)
     org   = await db.get(Organization, token.organization_id) if token else None
 
+    from app.utils import signed_qr
+
     return templates.TemplateResponse("public/track.html", {
         "request": request,
         "token_id": token_id,
+        "ws_ref": signed_qr.create_token_ref(
+            token_id, token.organization_id, signed_qr.PURPOSE_TRACK
+        ),
         "token_number": tracking["token_number"],
         "org_name": org.name if org else "Organization",
         "tracking": tracking,

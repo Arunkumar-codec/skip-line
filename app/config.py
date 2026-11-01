@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     db_user: str = "skipline_user"
     db_password: str = ""
 
+    # ── WebSocket scaling (Phase 6) ──────────────────────────────────────────
+    # Empty = single-worker in-process delivery (default; tests/dev).
+    # Set to e.g. redis://localhost:6379/0 for multi-worker pub/sub fan-out.
+    redis_url: str = ""
+
     @property
     def async_database_url(self) -> str:
          return (

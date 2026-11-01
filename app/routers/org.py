@@ -100,7 +100,6 @@ from app.services import (
     shift_service,
     token_service,
 )
-from app.websocket.manager import ws_manager
 from models.organization import Organization
 from models.weekly_schedule import ScheduleScopeLevel
 
@@ -575,10 +574,7 @@ async def token_action(
         token = await token_service.perform_token_action(
             db, token_id, org.id, body.action, "organization", org.id, body.notes
         )
-        display = await token_service.get_display_data(db, org.id)
-        await ws_manager.broadcast_to_org(org.id, {"type": "display_update", "data": display})
-        tracking = await token_service.get_token_tracking(db, token_id)
-        await ws_manager.broadcast_to_token(token_id, {"type": "tracking_update", "data": tracking})
+        # QUE-005 broadcast is centralized in token_service (post-commit).
         return APIResponse(message=f"Token {body.action}ed", data=TokenRead.model_validate(token))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -602,6 +598,44 @@ async def update_setting(
 ):
     await org_service.upsert_setting(db, org.id, key, value)
     return MessageResponse(message="Setting updated")
+
+
+# ── Phase 6: Public TV display access key (Decision 20) ──────────────────────
+
+@router.post("/display-key/rotate", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def rotate_display_key_api(
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Install/rotate the public display access key (DSP-001, Decision 20).
+
+    Only the SHA-256 hash is stored; the plaintext is returned exactly once
+    so the organization head can append it to the TV display URL:
+    /public/display/{org_id}?key=<plaintext>
+    Rotating immediately invalidates previously installed screens.
+    """
+    from app.services import display_access_service
+
+    key = await display_access_service.install_or_rotate_key(db, org.id)
+    return APIResponse(
+        message="Display access key rotated — store it now, it is shown only once",
+        data={
+            "key": key,
+            "display_url": f"/public/display/{org.id}?key={key}",
+        },
+    )
+
+
+@router.get("/display-key/status", response_model=APIResponse, dependencies=[Depends(get_current_org)])
+async def display_key_status_api(
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """Whether a display key is installed (never reveals the key itself)."""
+    from app.services import display_access_service
+
+    return APIResponse(data={"installed": await display_access_service.has_key_installed(db, org.id)})
 
 
 # ── Phase 2: Sub-Services & Hierarchy ─────────────────────────────────────────

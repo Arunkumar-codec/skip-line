@@ -23,9 +23,8 @@ from app.schemas.shift import (
     CounterShiftRead,
     WalkinBookingRequest,
 )
-from app.schemas.token import TokenActionRequest, TokenRead
+from app.schemas.token import TokenActionRequest, TokenRead, TokenScanRequest
 from app.services import audit_service, shift_service, token_service
-from app.websocket.manager import ws_manager
 from models.counter import Counter
 from models.counter_shift import CounterShiftStatus
 from models.employee import Employee
@@ -321,6 +320,8 @@ async def employee_token_action_api(
     """Perform action on token (call, serve, complete, no-show, skip, cancel).
 
     Enforces SHIFT-003: employee MUST have an active shift for token's counter.
+    Broadcasts happen inside token_service.perform_token_action AFTER commit
+    (QUE-005) — no duplicate router-level events.
     """
     try:
         token = await token_service.perform_token_action(
@@ -332,10 +333,6 @@ async def employee_token_action_api(
             actor_id=employee.id,
             notes=body.notes,
         )
-        display = await token_service.get_display_data(db, employee.organization_id)
-        await ws_manager.broadcast_to_org(employee.organization_id, {"type": "display_update", "data": display})
-        tracking = await token_service.get_token_tracking(db, token_id)
-        await ws_manager.broadcast_to_token(token_id, {"type": "tracking_update", "data": tracking})
         return APIResponse(message=f"Token {body.action}ed", data=TokenRead.model_validate(token))
     except (ValueError, PermissionError) as e:
         raise _map_value_error(e)
@@ -383,12 +380,67 @@ async def employee_call_next_api(
         actor_role="employee",
         actor_id=employee.id,
     )
-    display = await token_service.get_display_data(db, employee.organization_id)
-    await ws_manager.broadcast_to_org(employee.organization_id, {"type": "display_update", "data": display})
-    tracking = await token_service.get_token_tracking(db, token.id)
-    await ws_manager.broadcast_to_token(token.id, {"type": "tracking_update", "data": tracking})
+    # QUE-005 broadcast is centralized in token_service (post-commit).
 
     return APIResponse(message="Next token called", data=TokenRead.model_validate(token))
+
+
+# ── QR-003: Authorized scanner check-in ──────────────────────────────────────
+
+
+@router.post("/tokens/scan", response_model=APIResponse)
+async def employee_scan_token_api(
+    body: TokenScanRequest,
+    employee: Employee = Depends(get_current_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Scan a token QR for check-in (QR-003/QR-004/QR-005).
+
+    Requires an authenticated employee holding an ACTIVE approved shift for
+    the scanning counter. The signed reference is verified server-side;
+    invalid, expired, tampered, foreign-tenant and duplicate scans return
+    the QR-004 result vocabulary and are audited, never fatal.
+    """
+    from app.services import scan_service
+
+    if body.counter_id is None:
+        # Scanner context comes from the operator's active shift.
+        shift = await scan_service.get_active_shift_for_employee(
+            db, employee.organization_id, employee.id
+        )
+        if shift is None:
+            raise HTTPException(
+                status_code=403,
+                detail="An approved, active shift is required for this operation",
+            )
+        scan_counter_id = shift.counter_id
+    else:
+        scan_counter_id = body.counter_id
+        try:
+            await shift_service.require_active_shift(
+                db, employee.organization_id, scan_counter_id, employee.id
+            )
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        counter = await db.get(Counter, scan_counter_id)
+        if not counter or counter.organization_id != employee.organization_id:
+            raise HTTPException(status_code=404, detail="Counter not found")
+
+    outcome = await scan_service.scan_token(
+        db,
+        employee=employee,
+        ref=body.ref,
+        counter_id=scan_counter_id,
+        device_id=body.device_id,
+    )
+    # Caller-owned transaction: commit the check-in + audit row atomically.
+    await db.commit()
+
+    return APIResponse(
+        message=outcome.message,
+        data=scan_service.result_dict(outcome),
+    )
 
 
 # ── PHY-001..004: Assisted Walk-in Booking ────────────────────────────────────
@@ -437,8 +489,7 @@ async def book_walkin_token_api(
         },
     )
 
-    display = await token_service.get_display_data(db, employee.organization_id)
-    await ws_manager.broadcast_to_org(employee.organization_id, {"type": "display_update", "data": display})
+    # QUE-005 broadcast is centralized in token_service.book_token (post-commit).
 
     return APIResponse(
         message="Walk-in token booked successfully",

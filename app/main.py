@@ -73,10 +73,15 @@ async def lifespan(app: FastAPI):
     from app.websocket.heartbeat import start_heartbeat, stop_heartbeat
     await start_heartbeat()
 
+    # Phase 6: start the broadcast bus (Redis pub/sub when REDIS_URL is set)
+    from app.websocket.manager import ws_manager
+    await ws_manager.start()
+
     logger.info("Skip Line is ready.")
     yield
 
     logger.info("Shutting down…")
+    await ws_manager.stop()
     await stop_heartbeat()
     from app.services.notification_service import wait_for_background_tasks
     await wait_for_background_tasks(timeout=2.0)

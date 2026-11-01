@@ -37,6 +37,11 @@ def _build_pdf(
     booked_at: datetime,
     qr_code_path: Optional[str],
     guest_name: Optional[str],
+    branch_name: Optional[str] = None,
+    slot_label: Optional[str] = None,
+    payment_label: Optional[str] = None,
+    estimated_wait_minutes: Optional[int] = None,
+    instructions: Optional[str] = None,
 ) -> None:
     """Synchronous PDF generation — called in a thread executor."""
     doc = SimpleDocTemplate(
@@ -106,14 +111,27 @@ def _build_pdf(
     elements.append(Paragraph(token_number, token_style))
     elements.append(Spacer(1, 4 * mm))
 
-    # Details table
-    data = [
+    # Details table (QR-001: org, branch, service, date/slot, queue,
+    # payment state — all from authoritative booking data)
+    data = []
+    if branch_name:
+        data.append([Paragraph("Branch", label_style), Paragraph(branch_name, value_style)])
+    data.extend([
         [Paragraph("Counter", label_style), Paragraph(counter_name, value_style)],
         [Paragraph("Service", label_style), Paragraph(service_name, value_style)],
         [Paragraph("Position", label_style), Paragraph(str(queue_position), value_style)],
         [Paragraph("Date", label_style), Paragraph(booked_at.strftime("%d %b %Y"), value_style)],
         [Paragraph("Time", label_style), Paragraph(booked_at.strftime("%I:%M %p"), value_style)],
-    ]
+    ])
+    if slot_label:
+        data.append([Paragraph("Appointment", label_style), Paragraph(slot_label, value_style)])
+    if payment_label:
+        data.append([Paragraph("Payment", label_style), Paragraph(payment_label, value_style)])
+    if estimated_wait_minutes is not None:
+        data.append([
+            Paragraph("Est. Wait", label_style),
+            Paragraph(f"{int(estimated_wait_minutes)} min (snapshot)", value_style),
+        ])
     if guest_name:
         data.insert(0, [Paragraph("Name", label_style), Paragraph(guest_name, value_style)])
 
@@ -139,7 +157,8 @@ def _build_pdf(
 
     elements.append(Spacer(1, 4 * mm))
     elements.append(Paragraph(
-        "Thank you for using Skip Line. Please proceed when your number is called.",
+        instructions
+        or "Thank you for using Skip Line. Please proceed when your number is called.",
         ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7,
                        textColor=colors.HexColor("#9ca3af"), alignment=1),
     ))
@@ -157,6 +176,12 @@ async def generate_token_receipt(
     booked_at: datetime,
     qr_code_path: Optional[str] = None,
     guest_name: Optional[str] = None,
+    *,
+    branch_name: Optional[str] = None,
+    slot_label: Optional[str] = None,
+    payment_label: Optional[str] = None,
+    estimated_wait_minutes: Optional[int] = None,
+    instructions: Optional[str] = None,
 ) -> str:
     """
     Async wrapper — runs synchronous PDF generation in a thread executor.
@@ -170,16 +195,22 @@ async def generate_token_receipt(
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        _build_pdf,
-        output_path,
-        org_name,
-        token_number,
-        counter_name,
-        service_name,
-        queue_position,
-        booked_at,
-        qr_code_path,
-        guest_name,
+        lambda: _build_pdf(
+            output_path,
+            org_name,
+            token_number,
+            counter_name,
+            service_name,
+            queue_position,
+            booked_at,
+            qr_code_path,
+            guest_name,
+            branch_name=branch_name,
+            slot_label=slot_label,
+            payment_label=payment_label,
+            estimated_wait_minutes=estimated_wait_minutes,
+            instructions=instructions,
+        ),
     )
 
     relative = f"{settings.receipt_dir}/{filename}"

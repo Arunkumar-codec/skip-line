@@ -101,6 +101,15 @@ class Token(Base, TimestampMixin):
     called_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # QR-003/QR-005: first successful in-person check-in via the authorized
+    # scanner (POST /employee/tokens/scan). NULL = never checked in; a scan
+    # arriving later for an already-checked-in token continues to record an
+    # audit row but never double-mutates this column (idempotent).
+    checked_in_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checked_in_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
+    )
+
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # FIN-001: Admin-initiated pause of a PAID booking. Pausing flips the

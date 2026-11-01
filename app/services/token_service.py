@@ -683,6 +683,15 @@ async def book_token(
         )
     await db.refresh(token)
     logger.info("Token {} created for org {}", token.token_number, org_id)
+
+    # QUE-005: broadcast AFTER COMMIT so sockets always reflect durable state
+    # (successful creation) and failed bookings never trigger events.
+    from app.websocket.broadcaster import broadcast_queue_update
+    try:
+        await broadcast_queue_update(db, org_id, token.id)
+    except Exception:  # pragma: no cover — broadcaster already guards; belt & braces
+        logger.exception("Post-booking broadcast failed (queue stays valid)")
+
     return token
 
 
@@ -767,6 +776,16 @@ async def perform_token_action(
 
     await db.commit()
     await db.refresh(token)
+
+    # QUE-005: broadcast AFTER COMMIT — see broadcaster, display_update to
+    # the org room and tracking_update to the token's own room. Failures are
+    # swallowed by the broadcaster (queued commits must never be undone).
+    from app.websocket.broadcaster import broadcast_queue_update
+    try:
+        await broadcast_queue_update(db, org_id, token.id)
+    except Exception:  # pragma: no cover — broadcaster already guards
+        logger.exception("Post-action broadcast failed (queue stays valid)")
+
     return token
 
 
