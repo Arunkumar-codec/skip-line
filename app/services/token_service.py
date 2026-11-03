@@ -456,6 +456,11 @@ async def book_token(
     calls default to "walk_in" (Decision 13A issuance semantics).
     """
     booking_source = normalize_booking_source(booking_source)
+    # Phase 7 (ORGKYC-005): organization KYC/trust state gates public
+    # booking and payment-backed tokens. Organizations with no KYC record
+    # preserve legacy (pre-Phase-7) behaviour.
+    from app.services.kyc_service import assert_booking_allowed
+    await assert_booking_allowed(db, org_id)
     # KSK-005 / PHY-001: a retried booking (printer failure, network timeout)
     # with the same client reference returns the ORIGINAL token — printing
     # failures must never duplicate a token.
@@ -487,6 +492,12 @@ async def book_token(
         # surfaced through resolve_day_availability).
         if not service.is_active:
             raise ValueError("This service is currently unavailable")
+
+        # ORGKYC-005: RESTRICTED / MORE_INFO_REQUIRED kyc states block PAID
+        # services (price > 0) but keep free ones bookable.
+        await assert_booking_allowed(
+            db, org_id, paid_service=bool((service.price or 0) > 0)
+        )
 
         # Identity Verification Gating
         if service.requires_identity_verification:

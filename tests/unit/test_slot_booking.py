@@ -125,21 +125,27 @@ async def slot_for(db, counter, target: date, index: int = 0) -> TimeSlot:
     return slots[index]
 
 
-# 2026-11-02 is a Monday (published hours every weekday → bookable)
-BOOK_DAY = date(2026, 11, 2)
+# Dynamic future Monday: booking compares slot instants against the real
+# clock, so a hardcoded calendar date rots overnight. Always a Monday
+# strictly after today (published hours cover all weekdays → bookable).
+BOOK_DAY = date.today() + timedelta(days=1)
+while BOOK_DAY.weekday() != 0:   # walk forward to the next Monday
+    BOOK_DAY += timedelta(days=1)
 
 # ── SCH-005 same-day cutoff: frozen clocks ────────────────────────────────────
 #
 # The cutoff is instant-based, so the tests freeze the booking clock
 # (token_service._utcnow) and the tenant-date resolution
-# (token_service.get_tenant_today) to a fixed business day: 2026-11-02,
-# frozen at 03:00 UTC = 08:30 Asia/Kolkata — mid-morning, so a morning slot
+# (token_service.get_tenant_today) to the frozen business day BOOK_DAY,
+# at 03:00 UTC = 08:30 Asia/Kolkata — mid-morning, so a morning slot
 # has already started while an 09:15 IST slot still lies ahead. All times
 # stay within 00:00-18:30 UTC on the frozen date (representable per the
 # (slot_date, UTC time-of-day) storage pair).
 
 CUT_OFF_TODAY = BOOK_DAY
-_FROZEN_NOW = datetime(2026, 11, 2, 3, 0, tzinfo=timezone.utc)
+_FROZEN_NOW = datetime(
+    BOOK_DAY.year, BOOK_DAY.month, BOOK_DAY.day, 3, 0, tzinfo=timezone.utc
+)
 
 
 def freeze_cutoff_clock(monkeypatch, frozen_now=None):
@@ -379,11 +385,13 @@ class TestClosedDayRejection:
         """Published calendar without hours for this weekday → NOT_OPEN."""
         org = await make_org(db_session)
         counter = await make_counter(db_session, org)
-        # Publish ONLY Monday hours; craft a slot manually on a Tuesday.
+        # Publish ONLY Monday hours; craft a slot manually on a Tuesday
+        # (BOOK_DAY + 1 — always ≥ today+2, so the past-cutoff never fires
+        # and the NOT_OPEN path is what's exercised).
         await add_schedule_for_dow(db_session, org, 0)
         slot = TimeSlot(
             organization_id=org.id, counter_id=counter.id, service_id=None,
-            slot_date=date(2026, 11, 3),   # Tuesday
+            slot_date=BOOK_DAY + timedelta(days=1),   # Tuesday
             start_time=time(3, 30), end_time=time(4, 30),  # UTC for 9-10 IST
             capacity=10,
         )

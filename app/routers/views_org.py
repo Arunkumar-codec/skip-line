@@ -939,3 +939,92 @@ async def logout():
     resp = RedirectResponse("/org/login", status_code=302)
     resp.delete_cookie("org_token")
     return resp
+
+# -- Phase 7: Organization Feedback Desk --------------------------------------
+
+@router.get("/feedback", response_class=HTMLResponse)
+async def org_feedback_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services.feedback_service import list_public_reviews, public_summary
+    from models.feedback import Feedback
+
+    reviews = await list_public_reviews(db, org.id)
+    summary = await public_summary(db, org.id)
+    rows = list(
+        (
+            await db.execute(
+                select(Feedback).where(Feedback.organization_id == org.id)
+                .order_by(Feedback.id.desc())
+            )
+        ).scalars().all()
+    )
+    return templates.TemplateResponse("org/feedback.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "feedback",
+        "reviews": reviews,
+        "summary": summary,
+        "moderation_rows": rows,
+    })
+
+
+# -- Phase 7: Organization Support Cases -------------------------------------
+
+@router.get("/cases", response_class=HTMLResponse)
+async def org_cases_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from models.support import CaseParticipant, SupportCase
+
+    ids = (
+        await db.execute(
+            select(CaseParticipant.case_id).where(
+                CaseParticipant.participant_type == "organization",
+                CaseParticipant.participant_id == org.id,
+            )
+        )
+    ).scalars().all()
+    cases = list(
+        (
+            await db.execute(
+                select(SupportCase).where(SupportCase.id.in_(ids))
+                .order_by(SupportCase.id.desc())
+            )
+        ).scalars().all()
+    ) if ids else []
+    return templates.TemplateResponse("org/cases.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "cases",
+        "cases": cases,
+    })
+
+
+# -- Phase 7: Organization KYC Portal ----------------------------------------
+
+@router.get("/kyc", response_class=HTMLResponse)
+async def org_kyc_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import kyc_service
+
+    kyc = await kyc_service.get_or_create_kyc(db, org.id)
+    docs = await kyc_service.list_documents(db, org.id)
+    requirements = await kyc_service.get_doc_requirements(
+        db, kyc.org_category or org.org_type, org.id
+    )
+    return templates.TemplateResponse("org/kyc.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "kyc",
+        "kyc": kyc,
+        "docs": docs,
+        "required_documents": sorted(requirements),
+    })

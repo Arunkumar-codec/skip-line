@@ -47,6 +47,16 @@ from models.schedule_change import ScheduleChangePreview    # noqa: F401
 from models.counter_shift import CounterShift               # noqa: F401
 from models.kiosk_device import KioskDevice                 # noqa: F401
 from models.token_scan import TokenScan                     # noqa: F401
+from models.feedback import (                               # noqa: F401
+    Feedback,
+    FeedbackResponse,
+    ModerationStatus,
+)
+from models.support import (                                # noqa: F401
+    SupportCase, CaseParticipant, CaseMessage, CaseAttachment,
+)
+from models.knowledge import KnowledgeSolution              # noqa: F401
+from models.organization_kyc import OrganizationKyc         # noqa: F401
 from models.finance import (                                # noqa: F401
     LedgerEntry,
     CashSession,
@@ -97,6 +107,15 @@ __all__ = [
     "CounterShift",
     "KioskDevice",
     "TokenScan",
+    "Feedback",
+    "FeedbackResponse",
+    "ModerationStatus",
+    "SupportCase",
+    "CaseParticipant",
+    "CaseMessage",
+    "CaseAttachment",
+    "KnowledgeSolution",
+    "OrganizationKyc",
     "LedgerEntry",
     "CashSession",
     "Refund",

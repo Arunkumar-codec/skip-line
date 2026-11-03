@@ -5,7 +5,7 @@ Physical branch / location of an organization (e.g. Main Hospital, City Clinic).
 Used to scope physical counters, staff, and localized queue configurations.
 """
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -39,6 +39,15 @@ class Branch(Base, TimestampMixin):
     # are excluded from radius-filtered discovery results.
     geo_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     geo_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Phase 7 (ORGKYC-004): branch-level verification is separate from the
+    # organization KYC approval — a super admin explicitly verifies each
+    # physical location. NULL-free booleans; set via the admin KYC desk.
+    kyc_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    kyc_verified_at: Mapped["DateTime | None"] = mapped_column(DateTime(timezone=True), nullable=True)
+    kyc_verified_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="branches")

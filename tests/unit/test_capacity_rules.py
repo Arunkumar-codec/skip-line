@@ -385,11 +385,20 @@ class TestPriorityReserve:
 
 # ── Interaction with the atomic slot reservation ─────────────────────────────
 
-# Fixed far-future day (2026-11-02, Monday) for slot tests: committed rows
-# (book_token commits internally) must not sit on `date.today()+N` dates —
-# the discovery slot-date search tests query exactly those dates and must
-# not see this module's generated slots.
-SLOT_DAY = date(2026, 11, 2)
+# Fixed far-future day for slot tests: committed rows (book_token commits
+# internally) must not sit on `date.today()+N` dates — the discovery
+# slot-date search tests query exactly those dates and must not see this
+# module's generated slots. Computed dynamically (next Monday at least
+# MAX_ADVANCE_BOOKING_DAYS away) so the suite never rots from calendar
+# progression while still being a Monday bookable within the horizon.
+from app.services.schedule_service import MAX_ADVANCE_BOOKING_DAYS as _HORIZON
+
+# Latest-possible Monday inside the SCH-005 advance horizon (never past
+# MAX_ADVANCE_BOOKING_DAYS, always ≥ ~54 days out — far outside the
+# discovery-search windows other tests query).
+SLOT_DAY = date.today() + timedelta(days=_HORIZON)
+while SLOT_DAY.weekday() != 0:   # walk back to a Monday
+    SLOT_DAY -= timedelta(days=1)
 
 
 class TestCapacityRulesAndSlots:

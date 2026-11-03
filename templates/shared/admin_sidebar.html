@@ -42,6 +42,20 @@
       {% endif %}
     </a>
 
+    <div class="nav-section-label">Trust & Support</div>
+    <a href="/admin/kyc" class="nav-item {% if active_page == 'kyc' %}active{% endif %}">
+      <i class="bi bi-patch-check"></i><span>KYC Review</span>
+    </a>
+    <a href="/admin/feedback" class="nav-item {% if active_page == 'feedback' %}active{% endif %}">
+      <i class="bi bi-star-half"></i><span>Feedback Moderation</span>
+    </a>
+    <a href="/admin/cases" class="nav-item {% if active_page == 'support' %}active{% endif %}">
+      <i class="bi bi-headset"></i><span>Support Cases</span>
+    </a>
+    <a href="/admin/knowledge" class="nav-item {% if active_page == 'knowledge' %}active{% endif %}">
+      <i class="bi bi-journal-text"></i><span>Knowledge Solutions</span>
+    </a>
+
     <div class="nav-section-label">System</div>
     <a href="/admin/settings" class="nav-item {% if active_page == 'settings' %}active{% endif %}">
       <i class="bi bi-gear"></i><span>Settings</span>

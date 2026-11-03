@@ -1,0 +1,189 @@
+{% extends "shared/base.html" %}
+{% block title %}My Ratings{% endblock %}
+{% block sidebar %}{% include "shared/user_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-warning d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_user.name[0].upper() if current_user else 'U' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_user.name.split()[0] if current_user else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_user.email if current_user else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i>Profile</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">My Ratings</h1>
+    <p class="page-subtitle">Rate completed visits — every rating is verified against your token history</p>
+  </div>
+</div>
+
+{% if rateable %}
+<div class="content-card mb-4 fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3"><i class="bi bi-star me-2"></i>Rate a completed visit</h6>
+    <form id="rateForm" class="row g-2 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label text-xs text-muted">Visit (token)</label>
+        <select id="rateToken" class="form-select form-select-sm" required>
+          {% for t in rateable %}
+          <option value="{{ t.id }}">{{ t.token_number }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label text-xs text-muted">Overall</label>
+        <select id="rateOverall" class="form-select form-select-sm" required>
+          {% for i in [5,4,3,2,1] %}<option value="{{ i }}">{{ i }} ★</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label text-xs text-muted">Waiting time</label>
+        <select id="rateWaiting" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for i in [5,4,3,2,1] %}<option value="{{ i }}">{{ i }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label text-xs text-muted">Staff</label>
+        <select id="rateStaff" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for i in [5,4,3,2,1] %}<option value="{{ i }}">{{ i }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label text-xs text-muted">Service</label>
+        <select id="rateService" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for i in [5,4,3,2,1] %}<option value="{{ i }}">{{ i }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-12">
+        <label class="form-label text-xs text-muted">Comment</label>
+        <textarea id="rateComment" class="form-control form-control-sm" rows="2"
+                  maxlength="4000" placeholder="Share your experience…"></textarea>
+      </div>
+      <div class="col-12 d-flex align-items-center gap-3">
+        <div class="form-check form-switch">
+          <input type="checkbox" class="form-check-input" id="rateAnonymous"/>
+          <label class="form-check-label text-xs" for="rateAnonymous">Rate anonymously (shows "Verified customer")</label>
+        </div>
+        <button type="submit" id="rateBtn" class="btn btn-sm btn-primary ms-auto">
+          <span class="spinner-border spinner-border-sm d-none" id="rateSpin"></span> Submit Rating
+        </button>
+        <div class="text-xs text-muted">Result:
+          <select id="rateResult" class="form-select form-select-sm d-inline w-auto">
+            <option value="resolved">Resolved</option>
+            <option value="partial">Partial</option>
+            <option value="unresolved">Unresolved</option>
+          </select>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="content-card fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3">Submitted ratings</h6>
+    {% if ratings %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr class="text-xs text-muted">
+            <th>Rating</th><th>Categories</th><th>Result</th><th>Comment</th><th>Status</th><th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fb in ratings %}
+          <tr>
+            <td><span class="text-warning fw-bold">{{ fb.rating_overall }} ★</span></td>
+            <td class="text-xs text-muted">
+              {% if fb.rating_waiting %}Waiting {{ fb.rating_waiting }}{% endif %}
+              {% if fb.rating_staff %} · Staff {{ fb.rating_staff }}{% endif %}
+              {% if fb.rating_service %} · Service {{ fb.rating_service }}{% endif %}
+              {% if not fb.rating_waiting and not fb.rating_staff and not fb.rating_service %}—{% endif %}
+            </td>
+            <td class="text-xs">{{ fb.result or '—' }}</td>
+            <td class="text-xs text-truncate" style="max-width:280px">{{ fb.comment or '—' }}</td>
+            <td>
+              {% if str(fb.moderation_status) == 'ModerationStatus.PENDING' or fb.moderation_status == 'pending' %}
+                <span class="badge bg-secondary">Pending review</span>
+              {% elif str(fb.moderation_status) == 'ModerationStatus.PUBLISHED' or fb.moderation_status == 'published' %}
+                <span class="badge bg-success">Published</span>
+              {% elif str(fb.moderation_status) == 'ModerationStatus.REPORTED' or fb.moderation_status == 'reported' %}
+                <span class="badge bg-warning text-dark">Reported by organization</span>
+              {% elif str(fb.moderation_status) == 'ModerationStatus.HIDDEN' or fb.moderation_status == 'hidden' %}
+                <span class="badge bg-warning text-dark">Hidden by moderator</span>
+              {% else %}
+                <span class="badge bg-danger">Removed</span>
+              {% endif %}
+            </td>
+            <td class="text-xs text-muted">{{ fb.created_at.strftime('%d %b %Y') if fb.created_at }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center py-4 text-muted">
+      <i class="bi bi-star fs-1 text-muted mb-2 d-block"></i>
+      <h6 class="text-muted">No ratings yet</h6>
+      <p class="text-xs text-muted">Ratings appear here after you complete a token visit.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('rateForm');
+  if (!form) return;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('rateBtn');
+    const spin = document.getElementById('rateSpin');
+    btn.disabled = true; spin.classList.remove('d-none');
+    const tid = document.getElementById('rateToken').value;
+    const payload = {
+      rating_overall: parseInt(document.getElementById('rateOverall').value, 10),
+      is_anonymous: document.getElementById('rateAnonymous').checked,
+      comment: document.getElementById('rateComment').value.trim() || null,
+      result: document.getElementById('rateResult').value,
+    };
+    for (const id of ['rateWaiting', 'rateStaff', 'rateService']) {
+      const v = document.getElementById(id).value;
+      if (v) payload[id.replace('rate', 'rating_').toLowerCase()] = parseInt(v, 10);
+    }
+    try {
+      const res = await fetch(`/user/api/tokens/${tid}/feedback`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || 'Submission failed');
+      showToast(data.message || 'Rating submitted');
+      setTimeout(() => location.reload(), 600);
+    } catch (err) {
+      showToast(err.message, 'danger');
+    } finally {
+      btn.disabled = false; spin.classList.add('d-none');
+    }
+  });
+});
+</script>
+{% endblock %}

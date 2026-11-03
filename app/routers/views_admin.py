@@ -545,3 +545,97 @@ async def logout():
     resp = RedirectResponse("/admin/login", status_code=302)
     resp.delete_cookie("admin_token")
     return resp
+
+# -- Phase 7: Admin KYC Review Desk ------------------------------------------
+
+@router.get("/kyc", response_class=HTMLResponse)
+async def admin_kyc_page(request: Request, db: AsyncSession = Depends(get_db)):
+    admin, redir = await _get_admin_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import kyc_service
+
+    queue = await kyc_service.review_queue(db)
+    return templates.TemplateResponse("admin/kyc.html", {
+        "request": request,
+        "current_admin": admin,
+        "active_page": "kyc",
+        "queue": queue,
+    })
+
+
+# -- Phase 7: Admin Support Cases --------------------------------------------
+
+@router.get("/cases", response_class=HTMLResponse)
+async def admin_cases_page(request: Request, db: AsyncSession = Depends(get_db)):
+    admin, redir = await _get_admin_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from sqlalchemy import select
+    from models.support import SupportCase
+
+    cases = list(
+        (
+            await db.execute(
+                select(SupportCase).order_by(SupportCase.id.desc())
+            )
+        ).scalars().all()
+    )
+    return templates.TemplateResponse("admin/cases.html", {
+        "request": request,
+        "current_admin": admin,
+        "active_page": "support",
+        "cases": cases,
+        "status_filter": None,
+    })
+
+
+# -- Phase 7: Admin Knowledge Solutions --------------------------------------
+
+@router.get("/knowledge", response_class=HTMLResponse)
+async def admin_knowledge_page(request: Request, db: AsyncSession = Depends(get_db)):
+    admin, redir = await _get_admin_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import knowledge_service
+
+    solutions = await knowledge_service.list_solutions(db, None, platform_admin=True)
+    return templates.TemplateResponse("admin/knowledge.html", {
+        "request": request,
+        "current_admin": admin,
+        "active_page": "knowledge",
+        "solutions": solutions,
+    })
+
+
+# -- Phase 7: Admin Feedback Moderation --------------------------------------
+
+@router.get("/feedback", response_class=HTMLResponse)
+async def admin_feedback_page(request: Request, db: AsyncSession = Depends(get_db)):
+    admin, redir = await _get_admin_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from models.feedback import Feedback, ModerationStatus
+
+    rows = list(
+        (
+            await db.execute(
+                select(Feedback)
+                .where(Feedback.moderation_status.in_([
+                    ModerationStatus.PENDING, ModerationStatus.REPORTED,
+                    ModerationStatus.HIDDEN,
+                ]))
+                .order_by(Feedback.id.desc())
+            )
+        ).scalars().all()
+    )
+    return templates.TemplateResponse("admin/feedback_moderation.html", {
+        "request": request,
+        "current_admin": admin,
+        "active_page": "feedback",
+        "rows": rows,
+    })

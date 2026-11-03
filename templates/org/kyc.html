@@ -1,0 +1,245 @@
+{% extends "shared/base.html" %}
+{% block title %}Organization KYC{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name.split()[0] if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% set status = kyc.status %}
+{% set appealable = status in ['rejected', 'restricted', 'suspended'] %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Organization KYC</h1>
+    <p class="page-subtitle">Verification status, application and documents. Restrictions block public tokens and paid services.</p>
+  </div>
+</div>
+
+<div class="row g-3 mb-4 fade-in-up">
+  <div class="col-md-4">
+    <div class="content-card p-3 text-center">
+      <span class="badge fs-5 {% if status == 'approved' %}bg-success{% elif status == 'draft' %}bg-secondary{% elif status in ['submitted','under_review','more_info_required'] %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+        {{ status }}
+      </span>
+      <div class="text-xs text-muted mt-2">Current KYC status</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="content-card p-3 text-center">
+      <h4 class="mb-0">{{ kyc.tier | title }}</h4>
+      <div class="text-xs text-muted">Tier</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="content-card p-3 text-center">
+      <h5 class="mb-0">{{ kyc.expires_at.strftime('%d %b %Y') if kyc.expires_at else 'No expiry' }}</h5>
+      <div class="text-xs text-muted">Approval expires</div>
+    </div>
+  </div>
+</div>
+
+{% if kyc.org_category %}
+<div class="content-card mb-4 fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3">Required documents ({{ kyc.org_category }})</h6>
+    {% for d in required_documents %}
+      <span class="badge {% if d in (docs | map(attribute='document_type') | list) %}bg-success{% else %}bg-warning text-dark{% endif %} me-1">{{ d }}</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if kyc.rejection_reason or kyc.more_info_request %}
+<div class="alert {% if kyc.rejection_reason %}alert-danger{% else %}alert-warning{% endif %} fade-in-up">
+  {% if kyc.rejection_reason %}<strong>Rejection reason:</strong> {{ kyc.rejection_reason }}{% endif %}
+  {% if kyc.more_info_request %}<br/><strong>More information requested:</strong> {{ kyc.more_info_request }}{% endif %}
+</div>
+{% endif %}
+
+{% if appealable %}
+<div class="content-card mb-4 fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3"><i class="bi bi-shuffle me-2"></i>Appeal this decision</h6>
+    {% if kyc.appeal_status == 'pending' %}
+      <p class="text-xs text-muted mb-0">Your appeal is pending platform review.</p>
+    {% elif kyc.appeal_status == 'denied' %}
+      <p class="text-xs text-muted mb-0">Your appeal was denied: {{ kyc.appeal_decision_note or 'no note provided' }}.</p>
+    {% else %}
+      <form id="appealForm" class="row g-2 align-items-end">
+        <div class="col">
+          <textarea id="appealReason" class="form-control form-control-sm" rows="2" minlength="10"
+                    placeholder="Explain why this decision should be reconsidered…" required></textarea>
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-sm btn-outline-warning">File appeal</button>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="content-card mb-4 fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3"><i class="bi bi-images me-2"></i>Documents</h6>
+    {% if docs %}
+    <div class="table-responsive mb-3">
+      <table class="table table-sm align-middle">
+        <thead><tr class="text-xs text-muted"><th>Type</th><th>Number</th><th>Status</th><th>Expiry</th><th></th></tr></thead>
+        <tbody>
+          {% for d in docs %}
+          <tr>
+            <td class="text-xs fw-600">{{ d.document_type }}</td>
+            <td class="text-xs">{{ d.document_number_masked }}</td>
+            <td><span class="badge {% if d.verification_status == 'approved' %}bg-success{% elif d.verification_status == 'rejected' %}bg-danger{% else %}bg-secondary{% endif %}">{{ d.verification_status }}</span></td>
+            <td class="text-xs">
+              {{ d.expires_at.strftime('%d %b %Y') if d.expires_at else '—' }}
+              {% if d.expired %}<span class="badge bg-danger">expired</span>{% endif %}
+            </td>
+            <td><a class="btn btn-sm btn-outline-secondary" href="/org/api/kyc/documents/{{ d.id }}">
+              <i class="bi bi-download"></i></a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    <form id="docForm" class="row g-2 align-items-end border-top pt-3">
+      <div class="col-md-3">
+        <label class="form-label text-xs text-muted">Document type</label>
+        <input type="text" id="docType" class="form-control form-control-sm" list="docTypes" required/>
+        <datalist id="docTypes">
+          {% for d in required_documents %}<option value="{{ d }}"></option>{% endfor %}
+          <option value="registration_certificate"></option>
+        </datalist>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label text-xs text-muted">Document number</label>
+        <input type="text" id="docNumber" class="form-control form-control-sm" required/>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label text-xs text-muted">Expires (optional)</label>
+        <input type="date" id="docExpiry" class="form-control form-control-sm"/>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label text-xs text-muted">File (pdf/jpg/png, ≤ 8 MB)</label>
+        <input type="file" id="docFile" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png,.webp" required/>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-sm btn-outline-primary w-100">Upload</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3"><i class="bi bi-file-text me-2"></i>Application</h6>
+    <form id="appForm" class="row g-2">
+      <div class="col-md-6"><input class="form-control form-control-sm" id="f_legal_name" placeholder="Legal name" value="{{ kyc.legal_name or '' }}"></div>
+      <div class="col-md-6"><input class="form-control form-control-sm" id="f_registration_number" placeholder="Registration number" value="{{ kyc.registration_number or '' }}"></div>
+      <div class="col-md-6">
+        <select class="form-select form-select-sm" id="f_org_category">
+          {% for c in ['hospital','clinic','laboratory','pharmacy','bank','telecom','government_service','retail','other'] %}
+          <option value="{{ c }}" {% if kyc.org_category == c %}selected{% endif %}>{{ c | title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6"><input class="form-control form-control-sm" id="f_registered_address" placeholder="Registered address" value="{{ kyc.registered_address or '' }}"></div>
+      <div class="col-md-6"><input class="form-control form-control-sm" id="f_operating_address" placeholder="Operating address" value="{{ kyc.operating_address or '' }}"></div>
+      <div class="col-md-3"><input class="form-control form-control-sm" id="f_contact_email" placeholder="Contact email" value="{{ kyc.contact_email or '' }}"></div>
+      <div class="col-md-3"><input class="form-control form-control-sm" id="f_contact_phone" placeholder="Contact phone" value="{{ kyc.contact_phone or '' }}"></div>
+      <div class="col-md-4"><input class="form-control form-control-sm" id="f_representative_name" placeholder="Representative name" value="{{ kyc.representative_name or '' }}"></div>
+      <div class="col-md-4"><input class="form-control form-control-sm" id="f_representative_role" placeholder="Representative role" value="{{ kyc.representative_role or '' }}"></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" id="f_representative_email" placeholder="Rep. email" value="{{ kyc.representative_email or '' }}"></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" id="f_representative_phone" placeholder="Rep. phone" value="{{ kyc.representative_phone or '' }}"></div>
+      <div class="col-12 text-end">
+        <button type="button" class="btn btn-sm btn-outline-primary me-2" onclick="saveApp()">Save draft</button>
+        <button type="button" class="btn btn-sm btn-success" onclick="submitApp()">Submit for review</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const FIELDS = ['legal_name','registration_number','org_category','registered_address',
+                'operating_address','contact_email','contact_phone','representative_name',
+                'representative_role','representative_email','representative_phone'];
+const appPayload = () => {
+  const p = {};
+  for (const f of FIELDS) p[f] = document.getElementById('f_' + f).value.trim() || undefined;
+  return p;
+};
+const post = async (url, init) => {
+  const res = await fetch(url, init);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) throw new Error(data.detail || data.message || 'Request failed');
+  return data;
+};
+
+async function saveApp() {
+  try {
+    const data = await post('/org/api/kyc/application', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(appPayload()),
+    });
+    showToast(data.message || 'Application saved'); setTimeout(() => location.reload(), 600);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+async function submitApp() {
+  try {
+    await saveApp();
+    const data = await post('/org/api/kyc/submit', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    showToast(data.message || 'Application submitted'); setTimeout(() => location.reload(), 700);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+document.getElementById('docForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData();
+  fd.append('document_type', document.getElementById('docType').value.trim());
+  fd.append('document_number', document.getElementById('docNumber').value.trim());
+  const exp = document.getElementById('docExpiry').value;
+  if (exp) fd.append('expires_at', exp + 'T00:00:00');
+  fd.append('document', document.getElementById('docFile').files[0]);
+  try {
+    const res = await fetch('/org/api/kyc/documents', {method: 'POST', body: fd});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Upload failed');
+    showToast('Document uploaded'); setTimeout(() => location.reload(), 600);
+  } catch (err) { showToast(err.message, 'danger'); }
+});
+
+const appealForm = document.getElementById('appealForm');
+if (appealForm) {
+  appealForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const data = await post('/org/api/kyc/appeal', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({reason: document.getElementById('appealReason').value.trim()}),
+      });
+      showToast(data.message || 'Appeal filed'); setTimeout(() => location.reload(), 600);
+    } catch (err) { showToast(err.message, 'danger'); }
+  });
+}
+</script>
+{% endblock %}

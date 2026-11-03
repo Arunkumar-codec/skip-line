@@ -1,0 +1,90 @@
+{% extends "shared/base.html" %}
+{% block title %}Feedback Moderation{% endblock %}
+{% block sidebar %}{% include "shared/admin_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_admin.name[0].upper() }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_admin.name }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_admin.email }}</h6></li>
+    <li><a class="dropdown-item" href="/admin/change-password"><i class="bi bi-shield-lock me-2"></i>Change Password</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Feedback Moderation</h1>
+    <p class="page-subtitle">Pending, reported and hidden customer feedback — every action is audited</p>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3">Moderation queue</h6>
+    {% if rows %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr class="text-xs text-muted">
+            <th>#</th><th>Org</th><th>Rating</th><th>Comment</th><th>Status</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fb in rows %}
+          <tr>
+            <td class="text-xs text-muted">{{ fb.id }}</td>
+            <td class="text-xs fw-600">#{{ fb.organization_id }}</td>
+            <td><span class="text-warning fw-bold">{{ fb.rating_overall }} ★</span>
+              {% if fb.is_anonymous %}<span class="badge bg-secondary ms-1">anon</span>{% endif %}</td>
+            <td class="text-sm text-truncate" style="max-width:320px">{{ fb.comment or '—' }}</td>
+            <td><span class="badge {% if fb.moderation_status.value == 'reported' %}bg-warning text-dark{% elif fb.moderation_status.value == 'hidden' %}bg-dark{% else %}bg-secondary{% endif %}">{{ fb.moderation_status.value }}</span>
+              {% if fb.moderation_reason %}<span class="text-xs text-muted d-block">{{ fb.moderation_reason }}</span>{% endif %}</td>
+            <td class="text-nowrap">
+              <button class="btn btn-sm btn-success"
+                      onclick="moderate({{ fb.id }}, 'publish')">Publish</button>
+              <button class="btn btn-sm btn-outline-warning"
+                      onclick="moderate({{ fb.id }}, 'hide')">Hide</button>
+              <button class="btn btn-sm btn-outline-danger"
+                      onclick="moderate({{ fb.id }}, 'remove')">Remove</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-xs text-muted mb-0">Queue is empty — nothing awaiting moderation.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function moderate(id, action) {
+  let reason = null;
+  if (action !== 'publish') reason = prompt(`Reason for "${action}":`) || undefined;
+  try {
+    const res = await fetch(`/admin/api/feedback/${id}/moderate`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action, reason}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed');
+    showToast(data.message || 'Moderated');
+    setTimeout(() => location.reload(), 600);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+</script>
+{% endblock %}

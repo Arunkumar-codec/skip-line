@@ -1,0 +1,240 @@
+{% extends "shared/base.html" %}
+{% block title %}Support Cases{% endblock %}
+{% block sidebar %}{% include "shared/user_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-info d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_user.name[0].upper() if current_user else 'U' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_user.name.split()[0] if current_user else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_user.email if current_user else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i>Profile</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Support Cases</h1>
+    <p class="page-subtitle">Raise an issue with an organization or the platform — every case gets a stable reference</p>
+  </div>
+</div>
+
+<div class="content-card mb-4 fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3"><i class="bi bi-plus-circle me-2"></i>Open a new case</h6>
+    <form id="caseForm" class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label text-xs text-muted">Case type</label>
+        <select id="caseType" class="form-select form-select-sm" required>
+          <option value="user_to_org">Issue with an organization</option>
+          <option value="user_to_admin">Contact platform support</option>
+          <option value="payment_dispute">Payment dispute</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="col-md-4" id="caseOrgWrap">
+        <label class="form-label text-xs text-muted">Organization</label>
+        <select id="caseOrg" class="form-select form-select-sm">
+          {% for o in organizations %}
+          <option value="{{ o.id }}">{{ o.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label text-xs text-muted">Category</label>
+        <input type="text" id="caseCategory" class="form-control form-control-sm" maxlength="40"
+               placeholder="e.g. billing, queue, staff..." required/>
+      </div>
+      <div class="col-12">
+        <label class="form-label text-xs text-muted">Subject</label>
+        <input type="text" id="caseSubject" class="form-control form-control-sm" maxlength="200" required/>
+      </div>
+      <div class="col-12">
+        <label class="form-label text-xs text-muted">Details</label>
+        <textarea id="caseDetail" class="form-control form-control-sm" rows="3" maxlength="10000" required></textarea>
+      </div>
+      <div class="col-12 text-end">
+        <button type="submit" class="btn btn-sm btn-primary">
+          <span class="spinner-border spinner-border-sm d-none" id="caseSpin"></span> Submit Case
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="content-card fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3">My cases</h6>
+    {% if cases %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr class="text-xs text-muted">
+            <th>Reference</th><th>Type</th><th>Subject</th><th>Status</th><th>Reopened</th><th>Opened</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in cases %}
+          <tr>
+            <td class="text-xs fw-600">{{ c.reference }}</td>
+            <td class="text-xs text-muted">{{ c.case_type }}</td>
+            <td class="text-sm">{{ c.subject }}</td>
+            <td><span class="badge bg-secondary">{{ c.status }}</span></td>
+            <td class="text-xs text-muted">{{ c.reopened_count }}</td>
+            <td class="text-xs text-muted">{{ c.created_at.strftime('%d %b %Y') if c.created_at }}</td>
+            <td>
+              <button class="btn btn-sm btn-outline-primary" onclick="openCase({{ c.id }})">Open</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center py-4 text-muted">
+      <i class="bi bi-headset fs-1 text-muted mb-2 d-block"></i>
+      <h6 class="text-muted">No cases yet</h6>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Case detail modal -->
+<div class="modal fade" id="caseModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="caseModalTitle">Case</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="caseModalBody">
+        <div id="caseMessages" class="vstack gap-2 mb-3"></div>
+        <div id="caseActions" class="mb-3"></div>
+        <textarea id="caseReply" class="form-control form-control-sm mb-2" rows="2"
+                  placeholder="Write a reply…"></textarea>
+        <button class="btn btn-sm btn-primary" onclick="sendReply()">Send reply</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const statusBadge = s => {
+  const map = {closed:'bg-danger', resolved:'bg-success', reopened:'bg-warning text-dark',
+               solution_proposed:'bg-info text-dark', escalated:'bg-warning text-dark',
+               submitted:'bg-secondary', in_review:'bg-primary', acknowledged:'bg-secondary',
+               assigned:'bg-primary', waiting_for_party:'bg-secondary'};
+  return `<span class="badge ${map[s] || 'bg-secondary'}">${s}</span>`;
+};
+
+document.getElementById('caseType').addEventListener('change', (e) => {
+  document.getElementById('caseOrgWrap').style.display =
+    e.target.value === 'user_to_org' ? '' : 'none';
+});
+
+document.getElementById('caseForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const type = document.getElementById('caseType').value;
+  const payload = {
+    case_type: type,
+    category: document.getElementById('caseCategory').value.trim(),
+    subject: document.getElementById('caseSubject').value.trim(),
+    detail: document.getElementById('caseDetail').value.trim(),
+  };
+  if (type === 'user_to_org') {
+    payload.organization_id = parseInt(document.getElementById('caseOrg').value, 10);
+  }
+  try {
+    const res = await fetch('/user/api/cases', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Submission failed');
+    showToast(`Case opened with reference ${data.data.reference}`);
+    setTimeout(() => location.reload(), 800);
+  } catch (err) { showToast(err.message, 'danger'); }
+});
+
+let currentCase = null;
+
+async function openCase(id) {
+  try {
+    const res = await fetch(`/user/api/cases/${id}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to load case');
+    const d = data.data;
+    currentCase = d;
+    document.getElementById('caseModalTitle').textContent = `${d.case.reference} — ${d.case.subject}`;
+    const box = document.getElementById('caseMessages');
+    box.innerHTML = d.messages.map(m => `
+      <div class="border rounded p-2 bg-light">
+        <div class="text-xs text-muted fw-600">${m.sender_name} (${m.sender_type})</div>
+        <div class="text-sm" style="white-space:pre-wrap">${m.body.replace(/</g,'&lt;')}</div>
+      </div>`).join('') || '<p class="text-xs text-muted">No messages yet.</p>';
+    const actions = document.getElementById('caseActions');
+    actions.innerHTML = '';
+    if (d.case.status === 'solution_proposed') {
+      actions.innerHTML = `
+        <button class="btn btn-sm btn-success me-2" onclick="decide(true)">Accept resolution</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="decide(false)">Request more help</button>`;
+    }
+    if (['closed', 'resolved'].includes(d.case.status)) {
+      actions.innerHTML = `
+        <button class="btn btn-sm btn-outline-warning" onclick="reopenCase()">Reopen case</button>`;
+    }
+    new bootstrap.Modal(document.getElementById('caseModal')).show();
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+async function sendReply() {
+  const body = document.getElementById('caseReply').value.trim();
+  if (!body || !currentCase) return;
+  try {
+    const res = await fetch(`/user/api/cases/${currentCase.case.id}/messages`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed to send');
+    showToast('Reply sent');
+    openCase(currentCase.case.id);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+async function decide(accept) {
+  try {
+    const res = await fetch(`/user/api/cases/${currentCase.case.id}/resolution?accept=${accept}`, {method: 'POST'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed');
+    showToast(data.message); openCase(currentCase.case.id);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+async function reopenCase() {
+  const reason = prompt('Why are you reopening this case?');
+  if (!reason) return;
+  try {
+    const res = await fetch(`/user/api/cases/${currentCase.case.id}/reopen`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body: reason}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed');
+    showToast('Case reopened'); openCase(currentCase.case.id);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+</script>
+{% endblock %}

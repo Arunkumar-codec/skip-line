@@ -108,11 +108,24 @@ def add_exception(db, org_id, scope_level, scope_id, on_date, exc_type, reason,
     return row
 
 
-# 2026-10-28 is a Wednesday; 2026-11-02 is a Monday; 2026-11-01 a Sunday
-MONDAY = date(2026, 11, 2)
-TUESDAY = date(2026, 11, 3)
-WEDNESDAY = date(2026, 10, 28)
-SUNDAY = date(2026, 11, 1)
+# Dynamic future week (relative to the run date) so the tests never rot
+# from calendar progression. Every constant stays future-dated and each
+# keeps the RFC weekday its name describes.
+def _next_weekday(base: date, weekday_target: int, *, strictly_after: bool = True) -> date:
+    """First date ≥/ > `base` whose weekday() == weekday_target (Mon=0)."""
+    for offset in range(1, 15):
+        candidate = base + timedelta(days=offset)
+        if candidate.weekday() == weekday_target and (
+            offset > 0 if strictly_after else True
+        ):
+            return candidate
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+MONDAY = _next_weekday(date.today(), 0)   # strictly future Monday
+TUESDAY = MONDAY + timedelta(days=1)
+WEDNESDAY = MONDAY + timedelta(days=2)
+SUNDAY = MONDAY + timedelta(days=6)
 
 
 class TestPrecedence:

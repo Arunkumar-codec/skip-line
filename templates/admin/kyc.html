@@ -1,0 +1,158 @@
+{% extends "shared/base.html" %}
+{% block title %}KYC Review Desk{% endblock %}
+{% block sidebar %}{% include "shared/admin_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_admin.name[0].upper() }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_admin.name }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_admin.email }}</h6></li>
+    <li><a class="dropdown-item" href="/admin/change-password"><i class="bi bi-shield-lock me-2"></i>Change Password</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Organization KYC Review</h1>
+    <p class="page-subtitle">Applications in review with computed missing / expired / duplicate document indicators</p>
+  </div>
+</div>
+
+<div class="content-card mb-4 fade-in-up">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3">Review queue</h6>
+    {% if queue %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr class="text-xs text-muted">
+            <th>Organization</th><th>Status</th><th>Tier</th><th>Indicators</th><th>Appeal</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in queue %}
+          <tr>
+            <td class="text-sm fw-600">{{ q.org_name }} <span class="text-xs text-muted">#{{ q.organization_id }}</span></td>
+            <td><span class="badge {% if q.status == 'under_review' %}bg-primary{% elif q.status == 'more_info_required' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ q.status }}</span></td>
+            <td class="text-xs">{{ q.tier | title }}</td>
+            <td class="text-xs" style="max-width:280px">
+              {% if q.indicators.missing_documents %}
+                <span class="text-warning">Missing: {{ q.indicators.missing_documents | join(', ') }}</span><br/>
+              {% endif %}
+              {% if q.indicators.expired_documents %}
+                <span class="text-danger">Expired docs: {{ q.indicators.expired_documents | length }}</span><br/>
+              {% endif %}
+              {% if q.indicators.duplicate_document_numbers %}
+                <span class="text-danger">Duplicate numbers: {{ q.indicators.duplicate_document_numbers | join(', ') }}</span><br/>
+              {% endif %}
+              <span class="text-muted">{{ q.indicators.total_documents }} docs · rep verified: {{ q.indicators.representative_verified }}</span>
+            </td>
+            <td class="text-xs">
+              {% if q.appeal_status == 'pending' %}
+                <span class="badge bg-warning text-dark">appeal pending</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-nowrap">
+              <button class="btn btn-sm btn-outline-primary" onclick="openOrg({{ q.organization_id }})">
+                <i class="bi bi-folder-open"></i> Documents & branches
+              </button>
+              <button class="btn btn-sm btn-success" onclick="review({{ q.organization_id }}, 'approve')">Approve</button>
+              <button class="btn btn-sm btn-outline-danger" onclick="review({{ q.organization_id }}, 'reject')">Reject</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="review({{ q.organization_id }}, 'more_info')">More info</button>
+              <button class="btn btn-sm btn-outline-warning" onclick="review({{ q.organization_id }}, 'restrict')">Restrict</button>
+              <button class="btn btn-sm btn-outline-dark" onclick="review({{ q.organization_id }}, 'suspend')">Suspend</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-xs text-muted mb-0">No applications in review.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Org documents / branches panel -->
+<div class="content-card fade-in-up" id="orgPanel" style="display:none">
+  <div class="p-3">
+    <h6 class="fw-600 mb-3">Organization detail <span id="orgPanelTitle" class="text-muted"></span>
+      <button class="btn-close float-end" onclick="document.getElementById('orgPanel').style.display='none'"></button></h6>
+    <h6 class="text-xs text-muted">Documents (masked numbers, logged access)</h6>
+    <div id="orgDocs" class="mb-3"></div>
+    <h6 class="text-xs text-muted">Branch-level verification</h6>
+    <div id="orgBranches"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function review(orgId, action) {
+  let body = {action};
+  if (action === 'reject') body.reason = prompt('Rejection reason:') || 'Not specified';
+  if (action === 'more_info') body.more_info_request = prompt('What information is required?');
+  if (action === 'approve') {
+    const tier = prompt('Tier (base/standard/premium):', 'base');
+    if (tier) body.tier = tier;
+    const exp = prompt('Expiry date (YYYY-MM-DD, blank = never expires):');
+    if (exp) body.expires_at = exp + 'T00:00:00';
+  }
+  try {
+    const res = await fetch(`/admin/api/kyc/${orgId}/review`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed');
+    showToast(data.message || 'Review recorded');
+    setTimeout(() => location.reload(), 600);
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+async function openOrg(orgId) {
+  try {
+    const res = await fetch(`/admin/api/kyc/${orgId}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed');
+    const d = data.data;
+    document.getElementById('orgPanelTitle').textContent = `— organization #${orgId}`;
+    document.getElementById('orgDocs').innerHTML = d.documents.length ? d.documents.map(doc => `
+      <div class="border rounded p-2 d-flex justify-content-between align-items-center mb-1">
+        <span class="text-xs"><strong>${doc.document_type}</strong> · ${doc.document_number_masked}
+          ${doc.expired ? '<span class="badge bg-danger ms-1">expired</span>' : ''}
+        </span>
+        <a class="btn btn-sm btn-outline-secondary" href="/admin/api/kyc/${orgId}/documents/${doc.id}">
+          <i class="bi bi-download"></i></a>
+      </div>`).join('') : '<p class="text-xs text-muted mb-0">No documents uploaded.</p>';
+    document.getElementById('orgBranches').innerHTML = d.branches.map(b => `
+      <div class="border rounded p-2 d-flex justify-content-between align-items-center mb-1">
+        <span class="text-xs">${b.name} (${b.city})</span>
+        ${b.kyc_verified
+          ? '<button class="btn btn-sm btn-outline-dark" onclick="branchVerify(' + b.id + ', false)">Revoke</button>'
+          : '<button class="btn btn-sm btn-outline-success" onclick="branchVerify(' + b.id + ', true)">Verify branch</button>'}
+      </div>`).join('') || '<p class="text-xs text-muted mb-0">No branches.</p>';
+    document.getElementById('orgPanel').style.display = '';
+  } catch (err) { showToast(err.message, 'danger'); }
+}
+
+async function branchVerify(branchId, verified) {
+  const res = await fetch(`/admin/api/branches/${branchId}/kyc-verify?verified=${verified}`, {method: 'POST'});
+  const data = await res.json();
+  if (!res.ok) { showToast(data.detail || 'Failed', 'danger'); return; }
+  showToast('Branch verification updated');
+  openOrg(document.getElementById('orgPanelTitle').textContent.split('#')[1]);
+}
+</script>
+{% endblock %}

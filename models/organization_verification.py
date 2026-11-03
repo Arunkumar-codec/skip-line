@@ -37,6 +37,11 @@ class OrganizationVerification(Base, TimestampMixin):
     reviewed_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
     )
+    # Phase 7 (ORGKYC-001/003): per-document identifiers for the KYC review
+    # desk — a government/business document reference (duplicate detection)
+    # and a per-document expiry (expired-document review indicator).
+    document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     organization: Mapped["Organization"] = relationship(

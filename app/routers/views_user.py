@@ -329,3 +329,85 @@ async def user_identity_page(request: Request, db: AsyncSession = Depends(get_db
         "active_page": "identity",
         "identities": records,
     })
+
+# -- Phase 7: Verified Feedback (My Ratings) ----------------------------------
+
+@router.get("/feedback", response_class=HTMLResponse)
+async def user_feedback_page(request: Request, db: AsyncSession = Depends(get_db)):
+    user, redir = await _get_user_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from sqlalchemy import select
+    from models.feedback import Feedback
+    from models.token import Token, TokenStatus
+
+    rows = (
+        await db.execute(
+            select(Feedback).where(Feedback.user_id == user.id)
+            .order_by(Feedback.id.desc())
+        )
+    ).scalars().all()
+    rated_ids = {fb.token_id for fb in rows}
+    tokens = (
+        await db.execute(
+            select(Token).where(
+                Token.user_id == user.id,
+                Token.status == TokenStatus.COMPLETED,
+            ).order_by(Token.id.desc())
+        )
+    ).scalars().all()
+    rateable = [t for t in tokens if t.id not in rated_ids]
+    return templates.TemplateResponse("user/feedback.html", {
+        "request": request,
+        "current_user": user,
+        "active_page": "feedback",
+        "ratings": rows,
+        "rateable": rateable,
+    })
+
+
+# -- Phase 7: Unified Support (My Cases) --------------------------------------
+
+@router.get("/cases", response_class=HTMLResponse)
+async def user_cases_page(request: Request, db: AsyncSession = Depends(get_db)):
+    user, redir = await _get_user_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from sqlalchemy import select
+    from models.organization import Organization, OrgStatus
+    from models.support import CaseParticipant, SupportCase
+
+    ids = (
+        await db.execute(
+            select(CaseParticipant.case_id).where(
+                CaseParticipant.participant_type == "user",
+                CaseParticipant.participant_id == user.id,
+            )
+        )
+    ).scalars().all()
+    cases = list(
+        (
+            await db.execute(
+                select(SupportCase).where(SupportCase.id.in_(ids))
+                .order_by(SupportCase.id.desc())
+            )
+        ).scalars().all()
+    ) if ids else []
+    orgs = list(
+        (
+            await db.execute(
+                select(Organization).where(
+                    Organization.status == OrgStatus.APPROVED
+                ).order_by(Organization.name)
+            )
+        ).scalars().all()
+    )
+    return templates.TemplateResponse("user/cases.html", {
+        "request": request,
+        "current_user": user,
+        "active_page": "support",
+        "cases": cases,
+        "organizations": orgs,
+    })

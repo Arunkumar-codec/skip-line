@@ -231,6 +231,42 @@ SkipLine will be implemented in sequential, well-defined phases according to **S
 
 ---
 
+### Phase 7 Implementation Report (November 3, 2026)
+
+**Status: implemented end-to-end and Gate 7 satisfied on the automated evidence available in this environment.** No staging/commit/push performed (separate user approval required).
+
+#### Database (migration `0016_trust_feedback_support_kyc`, revision `0016` / down_revision `0015`)
+- Eight new tables: `feedback`, `feedback_responses`, `support_cases`, `case_participants`, `case_messages`, `case_attachments`, `knowledge_solutions`, `organization_kyc` (complete Phase 7 table set).
+- Additive expansion: `organization_verifications` (+`document_number`, +`expires_at` - ORGKYC-001/003 per-document identity and expiry) and `branches` (+`kyc_verified`, +`kyc_verified_at`, +`kyc_verified_by` FK - ORGKYC-004 branch-level verification).
+- Characteristics: fully additive, lossless, MySQL-8-first DDL (no ENUM ALTERs - status columns are guarded plain Strings per the standing Phase 7 decision); batch-safe on SQLite (`branches` column+FK work uses `batch_alter_table`; turns out to be the only SQLite-viable path for FK adds/drops); guarded `_table_exists` branches so sparse/partial chain states degrade gracefully.
+- **Verification:** `stamp 0015 -> upgrade 0016 -> downgrade -> re-upgrade` roundtrip on a disposable SQLite DB (all 8 tables created/dropped; a pre-existing `branches` row survives BOTH directions untouched) **AND a real MySQL 8.0.46 full cycle on the disposable `skipline_synccheck` DB: `upgrade 0015 → 0016` → `downgrade 0016 → 0015` → re-`upgrade` → `alembic check` = "No new upgrade operations detected" (zero ORM drift — two initial findings, a migration-only `uq_case_participants` constraint and a VARCHAR-vs-Enum mismatch on `feedback.moderation_status`, were fixed in the migration and re-verified)**. Standalone regression: `tests/unit/test_migration_0016.py`.
+
+#### Services & APIs (`app/routers/trust.py` - 50 handlers, plus `app/services/{feedback,support,knowledge,kyc,attachment}_service.py`)
+- **Verified feedback (FDB):** complete-token + owner-only submission over `GET/POST /user/api/tokens/{token_id}/feedback`; one row per token (unique token_id index) with REMOVED-row re-activation on resubmission; org respond/report (tenant-scoped, no edit/delete surface anywhere); five-state moderation with reason/bookkeeping and audited `feedback.moderation.*` events; public reviews (`/public/api/organizations/{org_id}/reviews` + `/summary`) show published-only content with verified badge, month/year label and anonymous display ("Verified customer") and never emit token ids, contacts or identity data.
+- **Unified support (SUP/CASE):** one case domain for all seven case types with per-principal authorization; CASE-002 server-side binding validation (foreign/unknown token, payment, feedback ids rejected; tenant derived from the principal); SC- prefixed stable references; participant isolation (strict `get_case_for_participant` gating; lazily provisioned admin participants); threaded messages with internal-note/admin-only visibility and human-review-gated sensitive drafts; private, unguessable-named, access-logged attachments (`attachment_service`); server-side status machine audited per transition; resolution flow accept/reject -> RESOLVED/WAITING_FOR_PARTY with reopen counters; closed cases refuse new messages (409).
+- **Knowledge solutions (KB):** org templates + admin global templates, usage counting, suggestion flow into cases where sensitive/financial text requires admin approval before parties can see it.
+- **Organization KYC (ORGKYC):** org-level application record (`organization_kyc`, one per org) with the full 12-state taxonomy and transition map; configurable per-category document requirements (`DEFAULT_DOC_REQUIREMENTS` + per-org `Setting('kyc_doc_requirements')` override); document upload/download as private access-logged artifacts with masked listing, admin-only expired-document retention purge (`purged://` tombstones); review queue with missing/expired/duplicate-document indicators; approve/more-info/reject/restrict/suspend/block/reinstate transitions with history ledger; approved/restricted/suspended states feed enforcement.
+- **ORGKYC-005 enforcement wired into the booking engine:** `token_service.book_token` (both the day-queue and slot-reservation paths) calls `kyc_service.assert_booking_allowed` - suspended/expired/blocked orgs cannot book; restricted / more-info-required orgs can book free tokens but not paid services (`service.price > 0`). Legacy orgs without a KYC row that already hold `status=approved` are grandfathered APPROVED (Decision 21).
+- All authorization is server-side; routers map LookupError -> 404, ValueError -> 409, PermissionError -> 403; enum columns serialize via `.value` (no raw enum leaks in JSON).
+
+#### User Interface (server-rendered, established pattern)
+- Customer portal: post-service feedback prompt on completed tokens; support-case inbox, thread (messages, attachments, resolution accept/reject, reopen).
+- Org portal: feedback view (respond/report), case inbox + thread, KYC application + document upload + status/appeal page.
+- Admin panel: feedback moderation list, case monitor with transitions/approvals, knowledge templates, KYC queue (indicators) + review desk (documents, history, actions, appeal decisions).
+- New templates: `templates/{user,org,admin}/{feedback,cases,kyc,knowledge,...}` (9 files) + sidebar entries in all three shared sidebars.
+
+#### Tests (32 focused Phase-7 cases; all green)
+- `tests/unit/test_feedback_domain.py` (8), `tests/unit/test_support_cases.py` (8), `tests/unit/test_kyc_enforcement.py` (9), `tests/unit/test_migration_0016.py` (1), `tests/api/test_phase7_trust_api.py` (6), shared factories `tests/phase7_helpers.py`.
+- **Full regression at delivery: 556 passed / 4 skipped (the 4 Redis-gated integration tests), zero failures.** Baseline before Phase 7 was 524/4; +32 Phase 7 tests.
+- Suite-stability fix included: date-hardened the Phase 3 scheduling/slot test constants (they hardcoded Nov 2-3, 2026 calendar dates that rotated into the past overnight - `BOOK_DAY`/`SLOT_DAY`/`MONDAY` are now computed future weekdays; no product code touched).
+
+#### Gate 7 evaluation
+> Customers can only rate completed tokens: **SATISFIED** - enforced in `feedback_service.submit_feedback` + API tests (`tests/api/test_phase7_trust_api.py`, forbidden for waiting tokens, non-owners, repeat submissions).
+> Cross-tenant support case leakage is impossible under automated tests: **SATISFIED** - participant gating proven cross-tenant at unit level and API level (403 for the outsider org and stranger user; MUST-level pass).
+- **Remaining deployment-gate items (carried, not blockers for the code gate):** (1) ~~execution of migration `0016` plus `alembic check` against the disposable MySQL DB (`skipline_synccheck`)~~ **DONE (Nov 3, 2026): MySQL 8.0.46 was reachable locally (no Docker needed) — upgrade → downgrade → re-upgrade → `alembic check` = "No new upgrade operations detected" (zero drift; the two initial findings were fixed in the migration itself, see the re-verified cycle below);** the full 0001..0015 chain on SQLite is still blocked by the pre-existing 0015 `create_unique_constraint` limitation documented in OPEN_DECISIONS; (2) guest-token feedback remains excluded (Decision-recorded scope cut); (3) malware scanning for KYC/case uploads is not implemented (ORGKYC-007 partial, row marked Incomplete).
+
+---
+
 ### Phase 8: Hardening (Risk Rules, Performance, E2E Scenarios & Release)
 **Primary Objective:** Production security hardening, performance tuning, full E2E scenario validation, and zero-dummy UI audit.
 
