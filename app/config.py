@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     # Set to e.g. redis://localhost:6379/0 for multi-worker pub/sub fan-out.
     redis_url: str = ""
 
+    # ── Distributed rate limiting (Phase 8 — SEC-004) ────────────────────────
+    # When redis_url is set, the rate limiter stores counters in Redis so
+    # limits hold across all app workers; on a Redis outage it falls back
+    # to the per-worker in-memory window (a warning is logged — protection
+    # is degraded, never silently disabled).
+    rate_limit_auth_requests: int = 20      # credential paths (login/register/password)
+    rate_limit_account_requests: int = 300  # per authenticated principal
+
     @property
     def async_database_url(self) -> str:
          return (
@@ -106,6 +114,22 @@ class Settings(BaseSettings):
     static_dir: str = "static"
     upload_dir: str = "uploads"
     identity_dir: str = "uploads/identities"
+
+    # ── Malware scanning (Phase 8 — SEC-003, local ClamAV) ───────────────────
+    # Approved approach: LOCAL CLAMAV via the clamd INSTREAM protocol.
+    # In production, run the clamav container/service and set
+    # CLAMAV_ENABLED=true (the compose file ships a clamav service).
+    # With scanning disabled, uploads are accepted but explicitly recorded
+    # with scan_status="disabled" (documented gap, never "clean").
+    clamav_enabled: bool = False
+    clamav_host: str = "127.0.0.1"
+    clamav_port: int = 3310
+    clamav_scan_timeout_seconds: float = 10.0
+
+    # ── CSRF (Phase 8 — SEC-004) ─────────────────────────────────────────────
+    # Enforcement is automatic in production; set CSRF_ENFORCE=true to
+    # exercise the middleware in development / integration tests.
+    csrf_enforce: bool = False
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: List[str] = ["http://localhost:8000"]

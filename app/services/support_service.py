@@ -20,7 +20,7 @@ All authorization and validation happens here (server-side):
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -515,6 +515,9 @@ async def add_attachment(
     sha256: Optional[str],
     uploaded_by_type: str,
     uploaded_by_id: Optional[int],
+    scan_status: Optional[str] = None,
+    scanned_at: Optional[Any] = None,
+    scan_signature: Optional[str] = None,
 ) -> CaseAttachment:
     if case.status == CaseStatus.CLOSED:
         raise ValueError("This case is closed.")
@@ -523,6 +526,8 @@ async def add_attachment(
         uploaded_by_type=uploaded_by_type, uploaded_by_id=uploaded_by_id,
         filename=filename, stored_path=stored_path, mime=mime,
         size_bytes=size_bytes, sha256=sha256, access_count=0,
+        scan_status=scan_status, scanned_at=scanned_at,
+        scan_signature=scan_signature,
     )
     db.add(attachment)
     await db.commit()

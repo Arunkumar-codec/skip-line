@@ -25,7 +25,7 @@ from models.finance import (
 )
 from models.organization import Organization
 from models.payment import Payment, PaymentMethod, PaymentStatus
-from models.token import Token
+from models.token import Token, TokenStatus
 from models.token_service_item import TokenServiceItem
 
 
@@ -561,6 +561,190 @@ async def evaluate_payment_token_risk(
             "payment_id": payment.id,
             "token_id": token.id,
             "legs": [l[0] for l in legs],
+        },
+        commit=commit,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 8 — Booking anomaly rules (ENF-001/002).
+# Same FinancialRiskFlag infrastructure as the financial rules above; the
+# thresholds that are not stated in MASTER_REQUIREMENTS are PROVISIONAL and
+# recorded in OPEN_DECISIONS alongside the financial-rule thresholds.
+# ══════════════════════════════════════════════════════════════════════════════
+
+DUPLICATE_ACTIVE_TOKEN_THRESHOLD = 1   # provisional — ≥1 additional active token
+NO_SHOW_ABUSE_THRESHOLD_24H = 3        # provisional — ≥3 skips in 24 h
+KIOSK_SPAM_THRESHOLD_1H = 5            # provisional — ≥5 kiosk tokens/1 h/ mobile
+CROSS_TENANT_SCAN_ABS_THRESHOLD_7D = 3  # provisional — ≥3 wrong-org scans/7 days
+
+
+def _identity_filters(
+    user_id: Optional[int], guest_mobile: Optional[str],
+):
+    """Reuse both customer identities (registered users and kiosk guests)."""
+    if user_id is not None:
+        return Token.user_id == user_id
+    if guest_mobile:
+        return Token.guest_mobile == guest_mobile.strip()
+    return None
+
+
+async def evaluate_duplicate_active_token_risk(
+    db: AsyncSession,
+    organization_id: int,
+    token_id: int,
+    user_id: Optional[int] = None,
+    guest_mobile: Optional[str] = None,
+    commit: bool = True,
+) -> Optional[FinancialRiskFlag]:
+    """Booking anomaly (ENF-002): the same principal holds more than one
+    ACTIVE token in the same organization inside the 24 h window —
+    overlaps the invariant enforced by KSK-005 (no silent duplicates) and
+    surfaces abuse patterns the dedup mitigates."""
+    identity = _identity_filters(user_id, guest_mobile)
+    if identity is None:
+        return None
+    since = _utcnow() - timedelta(hours=24)
+    others = (await db.execute(
+        select(func.count(Token.id)).where(
+            Token.organization_id == organization_id,
+            Token.id != token_id,
+            Token.status.in_(ACTIVE_TOKEN_STATUSES),
+            Token.booked_at >= since,
+            identity,
+        )
+    )).scalar() or 0
+    if others < DUPLICATE_ACTIVE_TOKEN_THRESHOLD:
+        return None
+    return await flag_risk(
+        db=db,
+        organization_id=organization_id,
+        risk_type="duplicate_active_tokens",
+        description=(
+            f"Principal already held {others} active token(s) in this "
+            f"organization within 24 hours when token #{token_id} was booked"
+        ),
+        severity=RiskSeverity.MEDIUM.value,
+        metadata={
+            "token_id": token_id, "user_id": user_id,
+            "guest_mobile": guest_mobile, "other_active_tokens": others,
+        },
+        commit=commit,
+    )
+
+
+async def evaluate_no_show_abuse_risk(
+    db: AsyncSession,
+    organization_id: int,
+    user_id: Optional[int] = None,
+    guest_mobile: Optional[str] = None,
+    commit: bool = True,
+) -> Optional[FinancialRiskFlag]:
+    """Booking anomaly (ENF-002): repeated skipped tokens by the same
+    principal within 24 hours (queue-jumping abuse pattern)."""
+    identity = _identity_filters(user_id, guest_mobile)
+    if identity is None:
+        return None
+    since = _utcnow() - timedelta(hours=24)
+    skipped = (await db.execute(
+        select(func.count(Token.id)).where(
+            Token.organization_id == organization_id,
+            Token.status == TokenStatus.SKIPPED.value,
+            Token.completed_at >= since,
+            identity,
+        )
+    )).scalar() or 0
+    if skipped < NO_SHOW_ABUSE_THRESHOLD_24H:
+        return None
+    return await flag_risk(
+        db=db,
+        organization_id=organization_id,
+        risk_type="no_show_abuse",
+        description=(
+            f"{skipped} tokens skipped within 24 hours by the same "
+            + (f"user #{user_id}" if user_id is not None else "kiosk guest")
+        ),
+        severity=RiskSeverity.MEDIUM.value if skipped < 10 else RiskSeverity.HIGH.value,
+        metadata={
+            "user_id": user_id, "guest_mobile": guest_mobile,
+            "skipped_24h": skipped, "threshold": NO_SHOW_ABUSE_THRESHOLD_24H,
+        },
+        commit=commit,
+    )
+
+
+async def evaluate_kiosk_spam_risk(
+    db: AsyncSession,
+    organization_id: int,
+    guest_mobile: Optional[str] = None,
+    commit: bool = True,
+) -> Optional[FinancialRiskFlag]:
+    """Kiosk spam (ENF-002): one kiosk guest identity generating tokens at
+    machine speed — ≥5 walk-in tokens in a single hour."""
+    if not guest_mobile:
+        return None
+    since = _utcnow() - timedelta(hours=1)
+    recent = (await db.execute(
+        select(func.count(Token.id)).where(
+            Token.organization_id == organization_id,
+            Token.booking_source == "kiosk",
+            Token.guest_mobile == guest_mobile.strip(),
+            Token.booked_at >= since,
+        )
+    )).scalar() or 0
+    if recent < KIOSK_SPAM_THRESHOLD_1H:
+        return None
+    return await flag_risk(
+        db=db,
+        organization_id=organization_id,
+        risk_type="kiosk_spam",
+        description=(
+            f"{recent} kiosk walk-in tokens within one hour from the same "
+            "guest mobile number"
+        ),
+        severity=RiskSeverity.HIGH.value if recent >= KIOSK_SPAM_THRESHOLD_1H * 2 else RiskSeverity.MEDIUM.value,
+        metadata={
+            "guest_mobile": guest_mobile, "tokens_1h": recent,
+            "threshold": KIOSK_SPAM_THRESHOLD_1H,
+        },
+        commit=commit,
+    )
+
+
+async def evaluate_cross_tenant_reference_risk(
+    db: AsyncSession,
+    organization_id: int,
+    commit: bool = True,
+) -> Optional[FinancialRiskFlag]:
+    """Suspicious cross-tenant reference attempts (ENF-002): repeated
+    'wrong_org' scan outcomes recorded by the participant organization in
+    the past 7 days indicate probing of other tenants' QR references."""
+    from models.token_scan import ScanResult
+
+    since = _utcnow() - timedelta(days=7)
+    from models.token_scan import TokenScan
+    attempts = (await db.execute(
+        select(func.count(TokenScan.id)).where(
+            TokenScan.organization_id == organization_id,
+            TokenScan.result == ScanResult.WRONG_ORG.value,
+            TokenScan.created_at >= since,
+        )
+    )).scalar() or 0
+    if attempts < CROSS_TENANT_SCAN_ABS_THRESHOLD_7D:
+        return None
+    return await flag_risk(
+        db=db,
+        organization_id=organization_id,
+        risk_type="cross_tenant_reference_attempts",
+        description=(
+            f"{attempts} scans of QR references belonging to different "
+            "organizations within 7 days"
+        ),
+        severity=RiskSeverity.MEDIUM.value,
+        metadata={
+            "wrong_org_scans_7d": attempts,
+            "threshold": CROSS_TENANT_SCAN_ABS_THRESHOLD_7D,
         },
         commit=commit,
     )

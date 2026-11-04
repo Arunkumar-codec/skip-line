@@ -225,6 +225,13 @@ class CaseAttachment(Base, TimestampMixin):
     mime: Mapped[str | None] = mapped_column(String(100), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Phase 8 (SEC-003): ClamAV scan outcome. Values: clean | infected |
+    # unavailable | disabled (None = pre-Phase-8 row). Infected files are
+    # deleted from storage; the row remains as security evidence with
+    # always_downloaded=False semantics (access_document refuses downloads).
+    scan_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scanned_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scan_signature: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # CASE-004: every authorized access is visible here + audit log.
     access_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

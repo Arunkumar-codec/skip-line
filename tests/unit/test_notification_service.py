@@ -112,7 +112,12 @@ class TestSendEmail:
 
 class TestNotificationDispatch:
     async def test_notify_token_created_dispatches_email(self, db_session):
+        from sqlalchemy import select
+
+        from models.notification_outbox import NotificationOutbox, OutboxStatus
         from models.token import TokenStatus
+        from app.services.notification_service import dispatch_outbox_row
+
         user = User(name="Test User", email="user@example.com", mobile="9000000000", password_hash="hash")
         db_session.add(user)
         await db_session.flush()
@@ -131,5 +136,20 @@ class TestNotificationDispatch:
 
         with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
             await notify_token_created(db_session, token, user)
-            await wait_for_background_tasks(timeout=1.0)
+            # Phase 8 (NTF-002): token email goes through the durable outbox
+            outbox_row = (
+                await db_session.execute(
+                    select(NotificationOutbox)
+                    .where(NotificationOutbox.dedup_key == f"tcreated:{token.id}")
+                )
+            ).scalar_one_or_none()
+            assert outbox_row is not None
+            assert outbox_row.status == OutboxStatus.PENDING
+
+            await dispatch_outbox_row(outbox_row.id, session=db_session)
+
             mock_send.assert_called_once()
+            await db_session.refresh(outbox_row)
+            assert outbox_row.status == OutboxStatus.SENT
+            assert outbox_row.sent_at is not None
+            assert outbox_row.attempts == 1

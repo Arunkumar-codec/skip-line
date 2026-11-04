@@ -195,6 +195,11 @@ class KycSubmitIn(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
 
 
+class AppealReasonIn(BaseModel):
+    """ENF-004 — organization appeal against an enforcement action."""
+    reason: str = Field(min_length=10, max_length=4000)
+
+
 class KycReviewIn(BaseModel):
     action: str = Field(
         pattern="^(under_review|more_info|approve|reject|restrict|suspend|block|unblock)$"

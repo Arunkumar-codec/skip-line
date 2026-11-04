@@ -1,0 +1,3 @@
+# Database dumps never belong in Git (potentially contains real data).
+*
+!.gitignore

@@ -57,6 +57,13 @@ from models.support import (                                # noqa: F401
 )
 from models.knowledge import KnowledgeSolution              # noqa: F401
 from models.organization_kyc import OrganizationKyc         # noqa: F401
+from models.enforcement import (                            # noqa: F401
+    EnforcementAction, EnforcementAppeal,
+    EnforcementType, EnforcementStatus, EnforcementScope,
+)
+from models.notification_outbox import NotificationOutbox, OutboxStatus  # noqa: F401
+from models.notification import ESSENTIAL_TYPES  # noqa: F401 (re-exported constants)
+from models.idempotency import IdempotencyKey, IdempotencyState  # noqa: F401
 from models.finance import (                                # noqa: F401
     LedgerEntry,
     CashSession,
@@ -116,6 +123,10 @@ __all__ = [
     "CaseAttachment",
     "KnowledgeSolution",
     "OrganizationKyc",
+    "EnforcementAction",
+    "EnforcementAppeal",
+    "NotificationOutbox",
+    "IdempotencyKey",
     "LedgerEntry",
     "CashSession",
     "Refund",

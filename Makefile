@@ -1,7 +1,10 @@
 # Skip Line — Makefile
 # Usage: make <target>
 
-.PHONY: help install dev migrate seed test lint docker-up docker-down clean
+.PHONY: help install dev migrate seed test lint docker-up docker-down clean \
+        backup restore security-scan pip-audit
+
+PYTHON_BIN ?= python
 
 # Load the developer's .env (if present) so authenticated targets work without
 # exporting variables manually. .env is gitignored and NEVER committed.
@@ -24,6 +27,10 @@ help:
 	@echo "  make lint        Check code style"
 	@echo "  make docker-up   Start full stack with Docker Compose"
 	@echo "  make docker-down Stop Docker stack"
+	@echo "  make backup      Dump the database to ./backups (requires stack up)"
+	@echo "  make restore     Restore: make restore FILE=backups/xxx.sql.gz [MODE=check|force]"
+	@echo "  make security-scan  Secret-pattern scan over tracked files"
+	@echo "  make pip-audit      Dependency CVE audit (needs pip-audit installed)"
 	@echo "  make clean       Remove generated files (qr_codes, receipts)"
 
 install:
@@ -69,6 +76,36 @@ docker-logs:
 
 docker-migrate:
 	docker compose exec app alembic upgrade head
+
+# ── Backups (Phase 8) ────────────────────────────────────────────────────────
+# Logical dump through the compose `backup` one-shot service (mysqldump
+# inside mysql:8.3). Output: ./backups/<db>_<timestamp>.sql.gz (gitignored).
+
+backup:
+	docker compose run --rm backup
+
+# MODE=check (default): validate the artifact into a scratch database.
+# MODE=force:  DESTRUCTIVE — drops and rebuilds the named database.
+ifeq ($(MODE),force)
+RESTORE_ARGS = --force
+else
+RESTORE_ARGS =
+endif
+
+restore:
+	@if [ -z "$(FILE)" ]; then \
+	  echo "usage: make restore FILE=backups/skipline_20261104T120000Z.sql.gz [MODE=force]" >&2; \
+	  exit 2; \
+	fi
+	bash scripts/restore.sh "$(FILE)" $${RESTORE_DB:-skipline_restore_check} $(RESTORE_ARGS)
+
+# ── Security tooling (Phase 8, SEC-008) ─────────────────────────────────────
+
+security-scan:
+	$(PYTHON_BIN) scripts/security_scan.py
+
+pip-audit:
+	$(PYTHON_BIN) scripts/security_scan.py --pip-audit
 
 clean:
 	find qr_codes -name "*.png" -delete 2>/dev/null || true

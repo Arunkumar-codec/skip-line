@@ -43,6 +43,12 @@ class OrganizationVerification(Base, TimestampMixin):
     document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Phase 8 (SEC-003 / ORGKYC-007): ClamAV scan outcome recorded per document.
+    # Values: clean | infected | unavailable | disabled (None = pre-Phase-8 row).
+    scan_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scanned_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scan_signature: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
     # Relationships
     organization: Mapped["Organization"] = relationship(
         "Organization", back_populates="verifications"

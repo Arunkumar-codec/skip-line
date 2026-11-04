@@ -13,7 +13,9 @@ Status lifecycle:
 import enum
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -34,6 +36,14 @@ class TokenStatus(str, enum.Enum):
 
 class Token(Base, TimestampMixin):
     __tablename__ = "tokens"
+    # Phase 8 composite indexes for the hot queue paths (perf audit; the
+    # single-column stripes below are preserved for legacy queries):
+    #   - give-next / queue listing: per counter by status then position
+    #   - org-wide queue history/analytics: per org+service by status
+    __table_args__ = (
+        Index("ix_tokens_counter_status_pos", "counter_id", "status", "queue_position"),
+        Index("ix_tokens_org_service_status", "organization_id", "service_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     organization_id: Mapped[int] = mapped_column(

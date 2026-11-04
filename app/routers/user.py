@@ -9,7 +9,7 @@ to /api/* so that the HTML view router always wins the first-match.
 import math
 from datetime import date
 from typing import Optional
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -127,7 +127,11 @@ async def book_token(
     body: TokenBookRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    """DB-001: an optional `Idempotency-Key` header makes a booking retry
+    SAFE — the same key replays the originally issued token instead of
+    creating a duplicate."""
     try:
         token = await token_service.book_token(
             db,
@@ -140,12 +144,19 @@ async def book_token(
             slot_id=body.slot_id,
             # Server-side issuing channel (SCH-004): never client input.
             booking_source="online",
+            idempotency_key=idempotency_key,
         )
         await notification_service.notify_token_created(db, token, user)
         await db.commit()
         return APIResponse(message="Token booked", data=TokenRead.model_validate(token))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        if msg.startswith("idempotency conflict"):
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    except PermissionError as e:
+        # Phase 8 (ENF-002): org suspension / scoped restriction / block
+        raise HTTPException(status_code=403, detail=str(e))
 
 
 # ── Token history (JSON API) ──────────────────────────────────────────────────

@@ -24,13 +24,23 @@ from models.payment import Payment, PaymentStatus
 # ── Authentication ────────────────────────────────────────────────────────────
 
 async def authenticate_org(db: AsyncSession, email: str, password: str) -> Optional[Organization]:
+    """Platform enforcements (NTF/ENF): a SUSPENDED organization may still
+    authenticate for the narrow enforcement-review/appeal surface
+    (`get_current_org` enforces path allow-listing); deactivated accounts
+    (permanent block) can never authenticate."""
     result = await db.execute(
         select(Organization).where(
-            and_(Organization.email == email, Organization.status == OrgStatus.APPROVED)
+            Organization.email == email,
+            Organization.status.in_((
+                OrgStatus.APPROVED.value, OrgStatus.SUSPENDED.value,
+            )),
+            # account deactivation (permanent block) is terminal
         )
     )
     org = result.scalar_one_or_none()
-    if not org or not verify_password(password, org.password_hash):
+    if not org or org.is_active is False:
+        return None
+    if not verify_password(password, org.password_hash):
         return None
     return org
 

@@ -188,6 +188,9 @@ async def upload_document(
     document_number: str,
     stored_path: Optional[str],
     expires_at: Optional[datetime],
+    scan_status: Optional[str] = None,
+    scanned_at: Optional[datetime] = None,
+    scan_signature: Optional[str] = None,
 ) -> OrganizationVerification:
     kyc = await get_or_create_kyc(db, organization_id)
     if kyc.status in (KycStatus.SUSPENDED, KycStatus.BLOCKED):
@@ -199,6 +202,10 @@ async def upload_document(
         document_number=document_number,
         expires_at=expires_at,
         verification_status=VerificationStatus.PENDING,
+        # SEC-003/ORGKYC-007: malware-scan evidence travels with the document
+        scan_status=scan_status or "disabled",
+        scanned_at=scanned_at,
+        scan_signature=scan_signature,
     )
     db.add(doc)
     await db.commit()

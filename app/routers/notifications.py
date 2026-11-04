@@ -40,3 +40,39 @@ async def mark_all_read(
 ):
     await notification_service.mark_notifications_read(db, user.id)
     return MessageResponse(message="All notifications marked as read")
+
+
+# ════════════════ Phase 8 — NTF-004 preferences ══════════════════════════════
+
+@router.get("/preferences", response_model=APIResponse)
+async def get_notification_preferences(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    prefs = await notification_service.get_preferences(db, user.id)
+    from models.notification import ESSENTIAL_TYPES, NotificationType
+    return APIResponse(data={
+        "disabled_types": list(prefs.disabled_types or []) if prefs else [],
+        "essential_types": sorted(ESSENTIAL_TYPES),
+        "available_types": [t.value for t in NotificationType],
+    })
+
+
+@router.put("/preferences", response_model=APIResponse)
+async def set_notification_preferences(
+    disabled_types: list[str],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """NTF-004: users manage optional notifications; essential security /
+    payment / service-disruption notices are rejected and can never be
+    disabled."""
+    try:
+        prefs = await notification_service.set_preferences(db, user.id, disabled_types)
+    except ValueError as e:
+        from fastapi import HTTPException
+        raise HTTPException(422, str(e))
+    return APIResponse(
+        message="Preferences updated",
+        data={"disabled_types": prefs.disabled_types or []},
+    )

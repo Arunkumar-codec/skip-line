@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from loguru import logger
-from sqlalchemy import func, select, and_, or_, update
+from sqlalchemy import func, insert, select, and_, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -438,6 +438,7 @@ async def book_token(
     slot_id: Optional[int] = None,
     booking_source: Optional[Any] = None,
     client_reference: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Token:
     """
     Create a new token and assign queue position.
@@ -456,6 +457,178 @@ async def book_token(
     calls default to "walk_in" (Decision 13A issuance semantics).
     """
     booking_source = normalize_booking_source(booking_source)
+    idem_row = None
+    fresh = False
+    from models.idempotency import IdempotencyState
+    if idempotency_key:
+        from app.services import idempotency_service
+        # DB-001 contract: begin() ALWAYS returns (row, freshly_acquired).
+        # fresh=True → we own the key and MUST complete()/fail() it at the
+        # end; fresh=False → someone else already ran (or is running) this
+        # key, so replay the COMPLETED result or conflict on OPEN.
+        idem_row, fresh = await idempotency_service.begin(
+            db,
+            organization_id=org_id,
+            key=idempotency_key,
+            operation="token.create",
+            payload={
+                "counter_id": counter_id, "service_id": service_id,
+                "sub_service_ids": sorted(sub_service_ids or []),
+                "user_id": user_id, "guest_name": guest_name,
+                "guest_mobile": guest_mobile, "slot_id": slot_id,
+            },
+            principal_type="user" if user_id else ("kiosk" if guest_name else None),
+            principal_id=user_id,
+        )
+        if not fresh:
+            if idem_row.status == IdempotencyState.COMPLETED:
+                from app.services import idempotency_service as _is
+                replayed = await _is.replay_token(db, idem_row)
+                if replayed is not None:
+                    return replayed
+            if idem_row.status == IdempotencyState.OPEN:
+                raise ValueError(
+                    "idempotency conflict: an operation with this key is in progress"
+                )
+    # Phase 8 / Decision 23 close-out: everything below can fail after the
+    # key was acquired (validation, capacity rules, enforcement gates,
+    # integrity races). A failed attempt MUST leave the key FAILED — never
+    # stuck OPEN, never replayable as success — while any successful body
+    # return records the settled token against the key for replay (done
+    # inside the body: dedup path and post-commit path).
+    idem_state: dict[str, Any] = {
+        "idem_row": idem_row, "fresh": fresh, "committed": False,
+    }
+    try:
+        token = await _book_token_body(
+            db,
+            org_id=org_id, counter_id=counter_id, service_id=service_id,
+            user_id=user_id, guest_name=guest_name, guest_mobile=guest_mobile,
+            sub_service_ids=sub_service_ids, form_answers=form_answers,
+            slot_id=slot_id, booking_source=booking_source,
+            client_reference=client_reference, idem_state=idem_state,
+        )
+    except BaseException:
+        await _record_idempotency_failure(db, idem_state)
+        raise
+    return token
+
+
+async def _record_idempotency_failure(
+    db: AsyncSession, idem_state: dict[str, Any]
+) -> None:
+    """Decision 23: safe failure-state handling for an owned idempotency key.
+
+    When the caller's booking attempt fails BEFORE the durable commit, the
+    key Row must end up FAILED (re-usable, NOT replayable) instead of stuck
+    OPEN. Two distinct durable states can exist at this point:
+
+      - the OPEN row was never committed (it was only flushed inside the
+        failed transaction): the rollback below discards it together with
+        any half-built booking (pending token insert / slot reservation);
+        the key is then re-recorded as FAILED on a clean transaction so the
+        failure does not have to rely on the session dying silently;
+      - the OPEN row was already committed mid-flow (or the failure raced
+        the booking commit): demote OPEN → FAILED so a crashed attempt can
+        never 409 forever.
+
+    Integrity guarantees: a COMPLETED row is never demoted (a real success
+    is not turned into failure after the fact) and a concurrent re-acquire
+    of the key (IntegrityError on the FAILED re-insert) is left untouched —
+    their in-flight operation wins.
+    """
+    idem_row = idem_state.get("idem_row")
+    if idem_row is None or not idem_state.get("fresh") or idem_state.get("committed"):
+        return
+    # Copy identification BEFORE the rollback — instances expire on rollback.
+    info: dict[str, Any] = {
+        "organization_id": idem_row.organization_id,
+        "key": idem_row.key,
+        "operation": idem_row.operation,
+        "fingerprint": idem_row.fingerprint,
+        "principal_type": idem_row.principal_type,
+        "principal_id": idem_row.principal_id,
+    }
+    from models.idempotency import IdempotencyKey, IdempotencyState
+
+    try:
+        await db.rollback()  # discard the half-built attempt (row included if uncommitted)
+        existing = (
+            await db.execute(
+                select(IdempotencyKey).where(
+                    IdempotencyKey.organization_id == info["organization_id"],
+                    IdempotencyKey.key == info["key"],
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            # OPEN row was uncommitted → gone; durably record the failure.
+            await db.execute(
+                insert(IdempotencyKey).values(
+                    organization_id=info["organization_id"],
+                    key=info["key"],
+                    operation=info["operation"],
+                    fingerprint=info["fingerprint"],
+                    status=IdempotencyState.FAILED,
+                    principal_type=info["principal_type"],
+                    principal_id=info["principal_id"],
+                )
+            )
+        elif existing.status == IdempotencyState.OPEN:
+            existing.status = IdempotencyState.FAILED
+        else:
+            return  # COMPLETED (concurrent success) / already FAILED — leave as is
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.warning(
+            "Idempotency failure record raced for org={} key={} "
+            "(a concurrent owner re-acquired the key)",
+            info["organization_id"], info["key"],
+        )
+    except Exception:
+        # Failure recording is best-effort bookkeeping; the booking failure
+        # itself must still propagate with the session in a clean state.
+        await db.rollback()
+        logger.exception(
+            "Idempotency failure record failed for org={} key={} (booking stays failed)",
+            info["organization_id"], info["key"],
+        )
+
+
+async def _book_token_body(
+    db: AsyncSession,
+    *,
+    org_id: int,
+    counter_id: Optional[int],
+    service_id: Optional[int],
+    user_id: Optional[int] = None,
+    guest_name: Optional[str] = None,
+    guest_mobile: Optional[str] = None,
+    sub_service_ids: Optional[list[int]] = None,
+    form_answers: Optional[dict[str, Any]] = None,
+    slot_id: Optional[int] = None,
+    booking_source: Optional[Any] = None,
+    client_reference: Optional[str] = None,
+    idem_state: dict[str, Any],
+) -> Token:
+    """Booking pipeline AFTER the idempotency key is acquired (Decision 23).
+
+    Runs the pre-existing booking logic untouched, plus:
+      - the KSK-005 client_reference dedup path records the settled token
+        against the held key (complete()) — previously this return left the
+        key OPEN, which the route commit then froze forever (infinite 409);
+      - the single business commit raises idem_state["committed"] so the
+        caller never demotes a key whose booking actually succeeded.
+    """
+    idem_row = idem_state["idem_row"]
+    # Phase 8 (ENF-002): enforcement ladder gates public tokens on every
+    # channel — org suspensions/blocks and scoped restrictions (branch /
+    # service / counter) refuse bookings up front.
+    from app.services.enforcement_service import ensure_booking_allowed
+    await ensure_booking_allowed(
+        db, org_id, counter_id=counter_id, service_id=service_id
+    )
     # Phase 7 (ORGKYC-005): organization KYC/trust state gates public
     # booking and payment-backed tokens. Organizations with no KYC record
     # preserve legacy (pre-Phase-7) behaviour.
@@ -479,6 +652,24 @@ async def book_token(
                 )
             ).scalar_one_or_none()
             if existing is not None:
+                # Decision 23: the client_reference dedup hit IS the settled
+                # result for this key — record it for replay instead of
+                # leaving the key OPEN (the route commit would otherwise
+                # freeze the row OPEN forever → infinite 409 on retry).
+                if idem_row is not None:
+                    from app.services import idempotency_service as _idem
+                    try:
+                        await _idem.complete(
+                            db, idem_row,
+                            {
+                                "token_id": existing.id,
+                                "token_number": existing.token_number,
+                            },
+                        )
+                    except Exception:  # pragma: no cover — dedup must not fail on evidence
+                        logger.exception(
+                            "Idempotency completion failed (client_reference dedup replay)"
+                        )
                 return existing
         else:
             client_reference = None
@@ -692,8 +883,39 @@ async def book_token(
             "Booking could not be completed due to a temporary conflict. "
             "Please try again."
         )
+    # Decision 23: the booking is durable from here on — the idempotency row
+    # committed OPEN inside this very transaction; the result snapshot is
+    # recorded immediately below. Never demote such a key to FAILED.
+    idem_state["committed"] = True
     await db.refresh(token)
     logger.info("Token {} created for org {}", token.token_number, org_id)
+
+    # Phase 8 (DB-001): record the durable idempotency result for replay
+    if idem_row is not None:
+        from app.services import idempotency_service
+        try:
+            await idempotency_service.complete(
+                db, idem_row,
+                {"token_id": token.id, "token_number": token.token_number},
+            )
+        except Exception:  # pragma: no cover — booking must not fail on evidence
+            logger.exception("Idempotency completion failed (token already created)")
+
+    # Phase 8 (ENF-001/002): booking anomaly evaluators (duplicate active
+    # tokens, no-show abuse, kiosk spam). These are advisory risk flags —
+    # they must never fail the booking that produced them.
+    try:
+        from app.services import financial_risk_service as frs
+        await frs.evaluate_duplicate_active_token_risk(
+            db, org_id, token.id, user_id=user_id, guest_mobile=guest_mobile,
+        )
+        await frs.evaluate_no_show_abuse_risk(
+            db, org_id, user_id=user_id, guest_mobile=guest_mobile,
+        )
+        if booking_source == "kiosk":
+            await frs.evaluate_kiosk_spam_risk(db, org_id, guest_mobile=guest_mobile)
+    except Exception:
+        logger.exception("Booking anomaly evaluation failed (token stays valid)")
 
     # QUE-005: broadcast AFTER COMMIT so sockets always reflect durable state
     # (successful creation) and failed bookings never trigger events.

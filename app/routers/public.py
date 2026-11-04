@@ -10,7 +10,7 @@ Public endpoints that require no authentication:
 from datetime import date as date_type
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,10 +39,16 @@ router = APIRouter()
 # ── Kiosk token booking ───────────────────────────────────────────────────────
 
 @router.post("/kiosk/book", response_model=APIResponse)
-async def kiosk_book(body: KioskTokenRequest, db: AsyncSession = Depends(get_db)):
+async def kiosk_book(
+    body: KioskTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
     """
     Guest booking from a public kiosk.
     No login required — guest name and mobile are captured instead.
+    Retries (printer/network failures) are already idempotent via
+    `client_reference`; an API `Idempotency-Key` header is honored too.
     """
     try:
         token = await token_service.book_token(
@@ -58,11 +64,17 @@ async def kiosk_book(body: KioskTokenRequest, db: AsyncSession = Depends(get_db)
             slot_id=body.slot_id,
             # Server-side issuing channel (SCH-004): never client input.
             booking_source="kiosk",
-            client_reference=body.client_reference,
+            client_reference=body.client_reference or idempotency_key,
         )
         return APIResponse(message="Token issued", data=TokenRead.model_validate(token))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        if msg.startswith("idempotency conflict"):
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    except PermissionError as e:
+        # Phase 8 (ENF-002): org suspension / scoped restriction / block
+        raise HTTPException(status_code=403, detail=str(e))
 
 
 # ── Kiosk Device Pairing & Heartbeat (KSK-001..006) ───────────────────────────

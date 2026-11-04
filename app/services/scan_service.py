@@ -121,6 +121,16 @@ async def scan_token(
             db, organization_id, None, employee.id, counter_id,
             ScanResult.WRONG_ORG, device_id,
         )
+        # Phase 8 (ENF-002): repeated wrong-tenant attempts feed the
+        # suspicious-cross-tenant-reference risk rule (inside the caller's
+        # transaction; never aborts the scan response).
+        try:
+            from app.services import financial_risk_service as frs
+            await frs.evaluate_cross_tenant_reference_risk(
+                db, organization_id, commit=False
+            )
+        except Exception:  # pragma: no cover — advisory rule
+            logger.exception("Cross-tenant risk evaluation failed")
         return ScanOutcome(ScanResult.WRONG_ORG, None, _MESSAGE[ScanResult.WRONG_ORG])
 
     token = await db.get(Token, token_id)

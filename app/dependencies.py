@@ -10,6 +10,7 @@ Provides:
       get_current_admin, get_current_org, get_current_employee, get_current_user
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -25,6 +26,9 @@ from models.organization import Organization
 from models.user import User
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# ENF-004: suspended-organization escape-hatch route (POST appeal)
+_RE_SUSPENDED_APPEAL = re.compile(r"^/org/api/enforcements/\d+/appeal/?$")
 
 
 # ── Unified Authenticated Principal ──────────────────────────────────────────
@@ -258,7 +262,34 @@ async def get_current_org(
     await _validate_session_if_present(db, payload)
 
     org = await db.get(Organization, int(payload["sub"]))
-    if not org or org.status != "approved":
+    if not org or org.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization account not found or deactivated",
+        )
+
+    if org.status != "approved":
+        if org.status == "suspended":
+            # Phase 8 (ENF-004): a suspended organization keeps ONLY the
+            # narrow enforcement-review/appeal surface — it can see the
+            # recorded reasons and file one appeal per action. Everything
+            # else (panel, counters, staff, catalogue) is refused until
+            # the platform reinstates the account.
+            path = request.url.path
+            allowed = (
+                (request.method == "GET" and path.rstrip("/") == "/org/api/enforcements")
+                or (
+                    request.method == "POST"
+                    and _RE_SUSPENDED_APPEAL.fullmatch(path) is not None
+                )
+            )
+            if allowed:
+                return org
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization is under platform enforcement; only the "
+                       "enforcement review/appeal endpoints are available",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Organization not approved"
         )

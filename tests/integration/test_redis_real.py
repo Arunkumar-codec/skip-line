@@ -92,7 +92,7 @@ async def test_real_redis_publish_reaches_fresh_buses_and_stops_clean():
     await bus.start()
 
     try:
-        assert await _pump_until(bus._listener_task is not None)
+        assert await _pump_until(lambda: bus._listener_task is not None)
         await asyncio.sleep(0.15)  # listener must be subscribed to deliver
     finally:
         await bus.stop()

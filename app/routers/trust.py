@@ -461,6 +461,13 @@ async def user_case_reopen(
 # the auth dependencies and audit trail stay unambiguous).
 
 
+async def _store_case_attachment(data: bytes, filename: str | None) -> dict:
+    """Shared quarantine→scan→promote storage for case attachments
+    (SEC-003). HTTPExceptions from the scan layer (422 infected /
+    503 unavailable) propagate unchanged — fail-closed semantics."""
+    return await attachment_service.save_scanned_file("cases", data, filename)
+
+
 @router.post("/user/api/cases/{case_id}/attachments", response_model=APIResponse)
 async def user_case_upload(
     case_id: int,
@@ -470,18 +477,16 @@ async def user_case_upload(
 ):
     case = await _get_case(db, case_id, "user", user.id)
     data = await file.read()
-    path, name, size, mime, sha = attachment_service.save_private_file(
-        "cases", data, file.filename
-    )
+    scanned = await _store_case_attachment(data, file.filename)
     try:
         attachment = await support_service.add_attachment(
-            db, case, path, name, mime, size, sha, "user", user.id
+            db, case, **_attachment_row_kwargs(scanned, "user", user.id)
         )
     except (ValueError, PermissionError) as e:
         raise HTTPException(409, str(e))
     return APIResponse(
         message="Attachment uploaded",
-        data={"attachment_id": attachment.id, "filename": name},
+        data={"attachment_id": attachment.id, "filename": scanned["display_name"]},
     )
 
 
@@ -494,18 +499,16 @@ async def org_case_upload(
 ):
     case = await _get_case(db, case_id, "organization", org.id)
     data = await file.read()
-    path, name, size, mime, sha = attachment_service.save_private_file(
-        "cases", data, file.filename
-    )
+    scanned = await _store_case_attachment(data, file.filename)
     try:
         attachment = await support_service.add_attachment(
-            db, case, path, name, mime, size, sha, "organization", org.id
+            db, case, **_attachment_row_kwargs(scanned, "organization", org.id)
         )
     except (ValueError, PermissionError) as e:
         raise HTTPException(409, str(e))
     return APIResponse(
         message="Attachment uploaded",
-        data={"attachment_id": attachment.id, "filename": name},
+        data={"attachment_id": attachment.id, "filename": scanned["display_name"]},
     )
 
 
@@ -518,19 +521,32 @@ async def admin_case_upload(
 ):
     case = await _get_case(db, case_id, "admin", None)
     data = await file.read()
-    path, name, size, mime, sha = attachment_service.save_private_file(
-        "cases", data, file.filename
-    )
+    scanned = await _store_case_attachment(data, file.filename)
     try:
         attachment = await support_service.add_attachment(
-            db, case, path, name, mime, size, sha, "admin", admin.id
+            db, case, **_attachment_row_kwargs(scanned, "admin", admin.id)
         )
     except (ValueError, PermissionError) as e:
         raise HTTPException(409, str(e))
     return APIResponse(
         message="Attachment uploaded",
-        data={"attachment_id": attachment.id, "filename": name},
+        data={"attachment_id": attachment.id, "filename": scanned["display_name"]},
     )
+
+
+def _attachment_row_kwargs(scanned: dict, uploader_type: str, uploader_id: int) -> dict:
+    return {
+        "stored_path": scanned["relpath"],
+        "filename": scanned["display_name"],
+        "mime": scanned["mime"],
+        "size_bytes": scanned["size"],
+        "sha256": scanned["sha256"],
+        "uploaded_by_type": uploader_type,
+        "uploaded_by_id": uploader_id,
+        "scan_status": scanned["scan_status"],
+        "scanned_at": scanned["scanned_at"],
+        "scan_signature": scanned["scan_signature"],
+    }
 
 
 async def _download_attachment(db, case_id, attachment_id, ptype, pid, ip=None):
@@ -551,6 +567,11 @@ async def _download_attachment(db, case_id, attachment_id, ptype, pid, ip=None):
     path = Path(attachment.stored_path)
     if not path.exists():
         raise HTTPException(404, "Attachment file missing")
+    # SEC-003 defense-in-depth: a row with recorded malware evidence must
+    # never be downloadable (infected copies are already deleted; this also
+    # covers evidence rows created by tooling rather than the upload route).
+    if getattr(attachment, "scan_status", None) in ("infected", "unavailable"):
+        raise HTTPException(409, "Attachment rejected by malware scanning")
     from datetime import datetime, timezone as _tz
     return FileResponse(path, filename=attachment.filename,
                         media_type=attachment.mime or "application/octet-stream")
@@ -725,7 +746,7 @@ async def org_kyc_document(
 
     data = await document.read()
     try:
-        path, name, size, mime, sha = attachment_service.save_private_file(
+        scanned = await attachment_service.save_scanned_file(
             f"kyc/{org.id}", data, document.filename
         )
     except HTTPException:
@@ -737,11 +758,16 @@ async def org_kyc_document(
         except ValueError:
             raise HTTPException(422, "Invalid expiry date")
     doc = await kyc_service.upload_document(
-        db, org.id, document_type, document_number.strip(), path, expires
+        db, org.id, document_type, document_number.strip(),
+        scanned["relpath"], expires,
+        scan_status=scanned["scan_status"],
+        scanned_at=scanned["scanned_at"],
+        scan_signature=scanned["scan_signature"],
     )
     return APIResponse(
         message="Document uploaded",
-        data={"document_id": doc.id, "filename": name},
+        data={"document_id": doc.id, "filename": scanned["display_name"],
+              "scan_status": scanned["scan_status"]},
     )
 
 
@@ -950,3 +976,58 @@ async def admin_kyc_purge(
 ):
     count = await kyc_service.purge_expired_documents(db, organization_id, admin.id)
     return APIResponse(message="Retention purge complete", data={"purged": count})
+
+
+# ════════════════ ENFORCEMENT & APPEALS (Phase 8 ENF-002..004) ════════════════
+
+@router.get("/org/api/enforcements", response_model=APIResponse)
+async def org_list_enforcements(
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """ENF-004: organizations can SEE each enforcement action with the
+    recorded reason so they can correct data, replace documents or appeal."""
+    from app.services import enforcement_service
+    actions, _total = await enforcement_service.list_actions(
+        db, org.id, page=1, per_page=100
+    )
+    return APIResponse(data={
+        "enforcements": [
+            {
+                "id": a.id,
+                "action_type": a.action_type,
+                "status": a.status,
+                "scope_type": a.scope_type,
+                "scope_target_id": a.scope_target_id,
+                "reason": a.reason,
+                "correction_deadline": a.correction_deadline.isoformat() if a.correction_deadline else None,
+                "restricted_until": a.restricted_until.isoformat() if a.restricted_until else None,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "resolved_reason": a.resolved_reason,
+            }
+            for a in actions
+        ]
+    })
+
+
+@router.post("/org/api/enforcements/{action_id}/appeal", response_model=APIResponse)
+async def org_file_appeal(
+    action_id: int,
+    body: ts.AppealReasonIn,
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """ENF-004: file an appeal against a platform enforcement action."""
+    from app.services import enforcement_service
+    try:
+        appeal = await enforcement_service.file_appeal(
+            db, org.id, action_id, body.reason
+        )
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return APIResponse(
+        message="Appeal submitted for review",
+        data={"appeal_id": appeal.id, "status": appeal.status},
+    )

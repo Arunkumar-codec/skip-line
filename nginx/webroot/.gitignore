@@ -1,0 +1,4 @@
+# ACME challenge files dropped here by certbot webroot renewals.
+# Ephemeral operational artifacts — never commit them.
+*
+!.gitignore

@@ -22,6 +22,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.database import engine, Base
+from app.middleware.csrf import CSRFMiddleware
+from app.middleware.headers import SecurityHeadersMiddleware
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 
@@ -78,6 +80,13 @@ async def lifespan(app: FastAPI):
     from app.websocket.manager import ws_manager
     await ws_manager.start()
 
+    # Phase 8 (NTF-002): durable outbox sweeper — retries due deliveries
+    # after failures/backoff and recovers rows enqueued just before a
+    # process restart. Testing env drives dispatch explicitly instead.
+    if settings.app_env != "testing":
+        from app.services.notification_service import start_outbox_sweeper
+        start_outbox_sweeper(interval_seconds=30)
+
     logger.info("Skip Line is ready.")
     yield
 
@@ -123,6 +132,12 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RateLimitMiddleware, max_requests=200, window_seconds=60)
+    # Phase 8 (SEC-004): CSRF double-submit protection + boundary headers.
+    # The last middleware declared is outermost: requests pass through
+    # SecurityHeaders (transparent header set), then CSRF, then the
+    # rate limiter (cheapest rejection runs innermost of the three).
+    app.add_middleware(CSRFMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # ── Static files ─────────────────────────────────────────────────────────
     app.mount("/static", StaticFiles(directory="static"), name="static")

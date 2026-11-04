@@ -1,0 +1,5 @@
+# TLS certificate/key material MUST stay out of version control.
+# This directory is tracked only so the compose mount target exists;
+# everything in it (except this file) is ignored.
+*
+!.gitignore

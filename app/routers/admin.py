@@ -16,6 +16,14 @@ from app.database import get_db
 from app.dependencies import get_current_admin
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.common import APIResponse, MessageResponse, PaginatedResponse
+from app.schemas.enforcement import (
+    EnforcementAppealDecisionIn,
+    EnforcementEscalateIn,
+    EnforcementIssueIn,
+    EnforcementResolveIn,
+    ReinstatementIn,
+    SuspendOrgIn,
+)
 from app.schemas.finance import (
     FinancialRiskFlagRead,
     OrgBankAccountRead,
@@ -32,12 +40,14 @@ from app.services import (
     admin_service,
     audit_service,
     bank_account_service,
+    enforcement_service,
     financial_risk_service,
     ledger_service,
     payment_policy_service,
     payout_service,
 )
 from models.admin import Admin
+from models.enforcement import EnforcementType
 from models.finance import BankAccountStatus, PayoutStatus
 from models.organization import Organization
 from models.token import Token
@@ -126,24 +136,61 @@ async def reject_org(
 @router.post("/organizations/{org_id}/suspend", response_model=MessageResponse)
 async def suspend_org(
     org_id: int,
+    body: SuspendOrgIn,
     admin: Admin = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    """Phase 8 (ENF-002/003/005): suspension is now enforcement-backed —
+    requires a stated reason, produces the pre-suspension impact evidence
+    (active tokens, pending payments/refunds, open cases, cash exposure)
+    and is subject to the Master §4.4 dual-approval policy."""
     try:
-        await admin_service.suspend_organization(db, org_id)
-        await audit_service.log_audit_event(
-            db,
-            action="org.suspended",
-            actor_type="admin",
-            actor_id=admin.id,
-            actor_email=admin.email,
-            organization_id=org_id,
-            target_type="organization",
-            target_id=str(org_id),
-        )
-        return MessageResponse(message="Organization suspended")
-    except ValueError as e:
+        impact = await enforcement_service.build_pre_suspension_impact(db, org_id)
+    except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    second = await _verify_second_approver(
+        db, body.second_approver_email, body.second_approver_password,
+        acting_admin=admin,
+    )
+    try:
+        action = await enforcement_service.issue_action(
+            db, org_id, EnforcementType.SUSPENSION.value, body.reason,
+            actor_label=admin.email, actor_id=admin.id,
+            second_approver=second,
+            evidence={
+                "pre_suspension_impact": impact,
+                "classification": enforcement_service.classification_from_impact(impact),
+                **(body.evidence or {}),
+            },
+            restricted_until=body.restricted_until,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await _notify_org_enforcement_email(db, org_id, action)
+    return MessageResponse(
+        message=f"Organization suspended (enforcement action #{action.id})"
+    )
+
+
+@router.get("/api/organizations/{org_id}/suspension-impact", response_model=APIResponse)
+async def pre_suspension_impact(
+    org_id: int,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """ENF-003: what a suspension of this organization would affect right
+    now (active/future tokens, pending payments/refunds, open cases, cash)."""
+    try:
+        impact = await enforcement_service.build_pre_suspension_impact(db, org_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return APIResponse(data={
+        "impact": impact,
+        "classification": enforcement_service.classification_from_impact(impact),
+    })
 
 
 @router.delete("/organizations/{org_id}", response_model=MessageResponse)
@@ -548,4 +595,283 @@ async def resume_paid_booking_api(
     return APIResponse(
         message="Paid booking resumed",
         data=PaidBookingHoldRead.model_validate(token),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 8 — Enforcement ladder / dual approval / appeals (ENF-002..005)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _verify_second_approver(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    *,
+    acting_admin: Admin,
+) -> dict:
+    """Verify the §4.4 second approver: a REAL, distinct platform admin
+    (this codebase has a single admin tier = Super Admins) with valid
+    credentials. Credentials are never logged or echoed back."""
+    if not email or not password:
+        raise HTTPException(
+            status_code=403,
+            detail="A second Super Admin approval is required for this "
+                   "high-impact action (provide second_approver_* fields)",
+        )
+    approver = await admin_service.authenticate_admin(db, email, password)
+    if approver is None:
+        raise HTTPException(status_code=403, detail="Second approver authentication failed")
+    if approver.id == acting_admin.id:
+        raise HTTPException(
+            status_code=403,
+            detail="The second approver must be a different Super Admin "
+                   "than the issuing administrator",
+        )
+    return {"id": approver.id, "label": approver.email}
+
+
+async def _notify_org_enforcement_email(db, org_id: int, action) -> None:
+    """NTF-001/003: enforcement notice to the organization (email channel
+    only — org accounts have no in-app user row). Subjects are minimized
+    (NTF-003); ESSENTIAL_TYPES cannot be disabled (NTF-004)."""
+    from app.services.notification_service import queue_outbox
+    from models.organization import Organization
+
+    org = await db.get(Organization, org_id)
+    if org is None or not org.email:
+        return
+    subject = f"[Skip Line] Platform notice: {action.action_type.replace('_', ' ')}"
+    body = (
+        f"<p>Your organization has received a platform enforcement action: "
+        f"<strong>{action.action_type}</strong>.</p>"
+        f"<p>Reason: {action.reason}</p>"
+        + (
+            "<p>Correction deadline: {}</p>".format(action.correction_deadline)
+            if action.correction_deadline else ""
+        )
+        + "<p>You may respond, correct the reported data, replace documents "
+        "or file an appeal from your organization panel.</p>"
+    )
+    try:
+        await queue_outbox(
+            db, channel="email", recipient=org.email,
+            subject=subject, body=body,
+            notification_type="enforcement_action",  # ESSENTIAL_TYPE
+            organization_id=org_id,
+        )
+    except Exception:  # pragma: no cover — notice must not block enforcement
+        pass
+
+
+@router.get("/api/enforcements", response_model=PaginatedResponse)
+async def list_enforcements(
+    page: int = 1,
+    per_page: int = 20,
+    status: str | None = None,
+    organization_id: int | None = None,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.schemas.enforcement import EnforcementActionRead  # avoids cycle
+    from app.services.enforcement_service import list_actions
+
+    per_page = max(1, min(per_page, 100))
+    actions, total = await list_actions(db, organization_id, status, page, per_page)
+    return PaginatedResponse(
+        page=page, per_page=per_page, total=total,
+        items=[EnforcementActionRead.model_validate(a).model_dump(mode="json")
+               for a in actions],
+    )
+
+
+@router.post("/api/enforcements", response_model=APIResponse)
+async def issue_enforcement(
+    body: EnforcementIssueIn,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    second = None
+    if body.action_type in (
+        EnforcementType.SUSPENSION.value, EnforcementType.PERMANENT_BLOCK.value
+    ):
+        second = await _verify_second_approver(
+            db, body.second_approver_email, body.second_approver_password,
+            acting_admin=admin,
+        )
+    else:
+        # a second approver field on a low-stage action would indicate intent;
+        # credentials provided are not consumed silently — reject loudly
+        if (body.second_approver_email or "").strip():
+            raise HTTPException(
+                400, "Second-approval credentials only apply to suspension / "
+                     "permanent_block actions"
+            )
+    try:
+        action = await enforcement_service.issue_action(
+            db, body.organization_id, body.action_type, body.reason,
+            actor_label=admin.email, actor_id=admin.id,
+            second_approver=second,
+            scope_type=body.scope_type,
+            scope_target_id=body.scope_target_id,
+            evidence=body.evidence,
+            correction_deadline=body.correction_deadline,
+            restricted_until=body.restricted_until,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if body.action_type in (
+        EnforcementType.SUSPENSION.value, EnforcementType.PERMANENT_BLOCK.value
+    ):
+        await _notify_org_enforcement_email(db, body.organization_id, action)
+    return APIResponse(
+        message=f"Enforcement action #{action.id} issued",
+        data={"id": action.id, "status": action.status},
+    )
+
+
+@router.post("/api/enforcements/{action_id}/escalate", response_model=APIResponse)
+async def escalate_enforcement(
+    action_id: int,
+    body: EnforcementEscalateIn,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    kwargs: dict = {
+        "actor_label": admin.email, "actor_id": admin.id,
+        "evidence": None, "correction_deadline": body.correction_deadline,
+        "restricted_until": body.restricted_until,
+    }
+    if body.scope_type:
+        kwargs["scope_type"] = body.scope_type
+    if body.scope_target_id:
+        kwargs["scope_target_id"] = body.scope_target_id
+    if body.new_action_type in (
+        EnforcementType.SUSPENSION.value, EnforcementType.PERMANENT_BLOCK.value
+    ):
+        kwargs["second_approver"] = await _verify_second_approver(
+            db, body.second_approver_email, body.second_approver_password,
+            acting_admin=admin,
+        )
+    try:
+        action = await enforcement_service.escalate_action(
+            db, action_id, body.new_action_type, body.reason, **kwargs
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if body.new_action_type in (
+        EnforcementType.SUSPENSION.value, EnforcementType.PERMANENT_BLOCK.value
+    ):
+        await _notify_org_enforcement_email(db, action.organization_id, action)
+    return APIResponse(
+        message=f"Escalated to {body.new_action_type} (action #{action.id})",
+        data={"id": action.id, "status": action.status},
+    )
+
+
+@router.post("/api/enforcements/{action_id}/resolve", response_model=APIResponse)
+async def resolve_enforcement(
+    action_id: int,
+    body: EnforcementResolveIn,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        action = await enforcement_service.resolve_action(
+            db, action_id, status=body.status, reason=body.reason,
+            resolver_label=admin.email, resolver_id=admin.id,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return APIResponse(
+        message=f"Enforcement action #{action.id} {body.status}",
+        data={"id": action.id, "status": action.status},
+    )
+
+
+@router.post("/organizations/{org_id}/reinstate", response_model=APIResponse)
+async def reinstate_org(
+    org_id: int,
+    body: ReinstatementIn,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Master §4.4: reinstating a suspended organization is high-impact and
+    requires a second-person approval."""
+    second = await _verify_second_approver(
+        db, body.second_approver_email, body.second_approver_password,
+        acting_admin=admin,
+    )
+    try:
+        org = await enforcement_service.reinstate_organization(
+            db, org_id, reason=body.reason, resolver_label=admin.email,
+            resolver_id=admin.id, second_approver=second,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return APIResponse(
+        message="Organization reinstated", data={"status": org.status}
+    )
+
+
+@router.get("/api/enforcement-appeals", response_model=PaginatedResponse)
+async def list_enforcement_appeals(
+    page: int = 1,
+    per_page: int = 20,
+    status: str | None = None,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import func as _f, select as _select
+    from models.enforcement import EnforcementAppeal as _EA
+
+    per_page = max(1, min(per_page, 100))
+    stmt = _select(_EA).order_by(_EA.created_at.desc())
+    if status:
+        stmt = stmt.where(_EA.status == status)
+    total = (await db.execute(_select(_f.count()).select_from(
+        stmt.subquery()))).scalar() or 0
+    res = await db.execute(stmt.offset((page - 1) * per_page).limit(per_page))
+    appeals = res.scalars().all()
+    from app.schemas.enforcement import EnforcementAppealRead
+    return PaginatedResponse(
+        page=page, per_page=per_page, total=total,
+        items=[EnforcementAppealRead.model_validate(a).model_dump(mode="json")
+               for a in appeals],
+    )
+
+
+@router.post("/api/enforcement-appeals/{appeal_id}/decide", response_model=APIResponse)
+async def decide_enforcement_appeal(
+    appeal_id: int,
+    body: EnforcementAppealDecisionIn,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        appeal = await enforcement_service.decide_appeal(
+            db, appeal_id, status=body.status,
+            decision_reason=body.decision_reason, reviewer_label=admin.email,
+            reviewer_id=admin.id,
+            re_verification_requested=body.re_verification_requested,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return APIResponse(
+        message=f"Appeal {body.status}", data={"id": appeal.id, "status": appeal.status}
     )
