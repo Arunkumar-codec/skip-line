@@ -77,6 +77,22 @@ def normalize_booking_source(value) -> str:
         raise ValueError(f"Invalid booking source: {value!r}")
 
 
+def guest_receipt_ref(token) -> Optional[str]:
+    """
+    Receipt-download reference for a booking response (QR-001 hardening).
+
+    Guest tokens (`user_id is None`) get a purpose-bound HMAC-signed
+    receipt reference — possession of it is the ONLY way to download the
+    guest receipt; the numeric token id alone never authorizes use.
+    User-owned tokens return None: their receipts are authorized by the
+    owner's authenticated session, not a shareable ref.
+    """
+    if token.user_id is not None:
+        return None
+    from app.utils import signed_qr
+    return signed_qr.receipt_ref(token.id, token.organization_id)
+
+
 # ── SCH-004 capacity-rule engine ──────────────────────────────────────────────
 #
 # Layers applied at booking (OPEN_DECISIONS Decision 13 reconciliation:
@@ -872,6 +888,17 @@ async def _book_token_body(
         meta={"slot_id": slot.id} if slot is not None else None,
     )
 
+    # Phase 9 (Workstream B): if the token's service has a configured
+    # multi-stage workflow, open its stage transaction in THIS transaction.
+    # A workflow failure must never fail the booking (B15 legacy guarantee).
+    try:
+        from app.services import workflow_service
+        await workflow_service.maybe_start_for_token(db, token)
+    except Exception:
+        logger.exception(
+            "Workflow start skipped for token {} (booking remains valid)", token.id
+        )
+
     try:
         await db.commit()
     except IntegrityError:
@@ -1007,6 +1034,20 @@ async def perform_token_action(
         meta={"old": old_status, "new": new_status},
     )
 
+    # Phase 9 (Workstream B): keep the workflow ledger consistent when the
+    # token itself reaches a terminal status (same transaction → atomic, B13).
+    if action in ("complete", "cancel", "skip"):
+        try:
+            from app.services import workflow_service
+            await workflow_service.finalize_for_token_status(
+                db, token, new_status.value if hasattr(new_status, "value") else str(new_status)
+            )
+        except Exception:
+            logger.exception(
+                "Workflow finalization skipped for token {} (token action remains valid)",
+                token.id,
+            )
+
     await db.commit()
     await db.refresh(token)
 
@@ -1065,7 +1106,30 @@ async def get_token_tracking(db: AsyncSession, token_id: int) -> dict:
         "estimated_wait_minutes": int(people_ahead) * est_minutes,
         "current_token_at_counter": current_token,
         "counter_name": counter.counter_name if counter else "",
+        # Phase 9 (Workstream B): meaningful multi-stage progress for tokens
+        # booked onto a service with a configured workflow; empty for single-
+        # stage services (B11/B15). stage_minutes_remaining lets clients add
+        # the customer's own remaining stage time on top of the queue wait
+        # without changing the queue-metric semantics of the fields above.
+        "workflow": await _token_workflow_view(db, token),
     }
+
+
+async def _token_workflow_view(db: AsyncSession, token: Token) -> dict:
+    try:
+        from app.services import workflow_service
+        progress = await workflow_service.get_progress(
+            db, token.id, token.organization_id
+        )
+        if not progress:
+            return {}
+        return {
+            k: progress[k]
+            for k in ("workflow_id", "workflow_name", "status", "current_stage",
+                      "stages", "stage_minutes_remaining")
+        }
+    except Exception:  # pragma: no cover — tracking must never fail on views
+        return {}
 
 
 # ── Public display data ────────────────────────────────────────────────────────

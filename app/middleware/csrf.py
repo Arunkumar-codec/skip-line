@@ -52,7 +52,7 @@ EXEMPT_PREFIXES = (
     "/payments/webhook",  # provider call with its own signature verification
     "/public/",           # kiosk device endpoints authenticate via device secrets
     "/ws",                # websocket upgrades
-    "/health", "/static", "/qr_codes", "/receipts",
+    "/health", "/static",
 )
 
 

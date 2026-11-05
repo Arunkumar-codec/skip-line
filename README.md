@@ -43,6 +43,8 @@
 | **Email Notifications** | Token created, called, completed via SMTP |
 | **Admin Dashboard** | Org approval, analytics, revenue reports |
 | **Org Dashboard** | Counter management, queue operations, live stats |
+| **Multi-Stage Workflows** | Per-service stage flows (e.g. Registration → Measurement → Pharmacy), skippable/mandatory stages, race-safe transitions, customer progress tracking |
+| **AI Booking Assistant** | Optional, provider-configured chat that discovers orgs, checks real availability/price and books — never without the user's explicit Confirm & Book (graceful when unconfigured) |
 
 ---
 
@@ -59,6 +61,7 @@
 | PDF | ReportLab |
 | Payments | Razorpay SDK |
 | Email | aiosmtplib |
+| AI Assistant | OpenAI-compatible chat over httpx (optional, off by default) |
 | Containerisation | Docker, Docker Compose, Nginx |
 | Testing | pytest-asyncio, httpx |
 
@@ -302,8 +305,8 @@ All API endpoints return JSON in the format:
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET | `/tokens/{id}/receipt` | Optional | Download PDF receipt |
-| GET | `/tokens/{id}/qr` | Optional | Download QR image |
+| GET | `/tokens/{id}/receipt` | Owner session, or guest `?ref=<signed receipt ref>` | Download PDF receipt |
+| GET | `/tokens/{id}/qr` | Owner session, or guest `?ref=<signed receipt ref>` | Download QR image |
 | POST | `/payments/initiate` | User | Create Razorpay order |
 | POST | `/payments/verify` | User | Verify payment signature |
 

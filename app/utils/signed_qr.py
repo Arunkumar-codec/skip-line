@@ -46,13 +46,15 @@ from app.config import settings
 
 REF_VERSION = 1
 
-PURPOSE_SCAN = "scan"    # authorized employee check-in QR (QR-003)
-PURPOSE_TRACK = "track"  # public live-tracking QR (QR-002)
+PURPOSE_SCAN = "scan"       # authorized employee check-in QR (QR-003)
+PURPOSE_TRACK = "track"     # public live-tracking QR (QR-002)
+PURPOSE_RECEIPT = "receipt" # guest receipt/QR download authorization (QR-001 hardening)
 
 # Decision 19 (PROVISIONAL — recorded in docs/OPEN_DECISIONS.md):
 # requirements do not define these lifetimes.
 SCAN_REF_TTL_SECONDS: int = 24 * 60 * 60            # 24 hours
 TRACK_REF_TTL_SECONDS: int = 90 * 24 * 60 * 60      # 90 days
+RECEIPT_REF_TTL_SECONDS: int = 24 * 60 * 60         # 24 hours (also provisional)
 
 # Verification outcomes (machine-readable; Tampered/Invalid are distinct so
 # the audit trail can tell deliberate forgery attempts from garbage input).
@@ -77,7 +79,7 @@ class RefPayload:
 
 
 def _purposes() -> tuple:
-    return (PURPOSE_SCAN, PURPOSE_TRACK)
+    return (PURPOSE_SCAN, PURPOSE_TRACK, PURPOSE_RECEIPT)
 
 
 def _derivation_key(purpose: str) -> bytes:
@@ -125,9 +127,12 @@ def create_token_ref(
     if purpose not in _purposes():
         raise ValueError(f"Unknown ref purpose: {purpose}")
     if ttl_seconds is None:
-        ttl_seconds = (
-            SCAN_REF_TTL_SECONDS if purpose == PURPOSE_SCAN else TRACK_REF_TTL_SECONDS
-        )
+        if purpose == PURPOSE_SCAN:
+            ttl_seconds = SCAN_REF_TTL_SECONDS
+        elif purpose == PURPOSE_TRACK:
+            ttl_seconds = TRACK_REF_TTL_SECONDS
+        else:
+            ttl_seconds = RECEIPT_REF_TTL_SECONDS
     if ttl_seconds <= 0:
         raise ValueError("ttl_seconds must be positive")
 
@@ -152,6 +157,18 @@ def create_token_ref(
 def track_ref_url(token_id: int, org_id: int, base_url: str) -> str:
     """Full public tracking URL embedded in QR codes (QR-002)."""
     return f"{base_url}/public/track/{create_token_ref(token_id, org_id, PURPOSE_TRACK)}"
+
+
+def receipt_ref(token_id: int, org_id: int) -> str:
+    """
+    Signed receipt-download reference for guest tokens (QR-001 hardening).
+
+    A guest receipt must never be downloadable merely by knowing or guessing
+    the numeric token id; possession of this purpose-bound, expiring ref is
+    the authorization. Purpose-binding means a track/scan ref can never
+    authorize a receipt download and vice versa.
+    """
+    return create_token_ref(token_id, org_id, PURPOSE_RECEIPT)
 
 
 def verify_token_ref(

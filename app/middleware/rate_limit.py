@@ -198,7 +198,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip rate limiting for static files, health checks, and testing
         if settings.app_env == "testing" or request.url.path.startswith((
-            "/static", "/health", "/qr_codes", "/receipts",
+            "/static", "/health",
         )):
             return await call_next(request)
 

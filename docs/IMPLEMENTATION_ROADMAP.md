@@ -278,3 +278,31 @@ SkipLine will be implemented in sequential, well-defined phases according to **S
   - Conduct thorough dead-link and empty-state audit across all panels.
   - Finalize production Docker Compose, Nginx SSL configuration, and database backup routines.
 - **Release Gate 8:** Zero unresolved high or critical defects; all 193 requirements verified in matrix; all E2E scenario tests passing; release readiness sign-off.
+
+---
+
+### Phase 9: Booking Continuity & Configurable Workflows (November 4, 2026 — delivered)
+**Primary Objective:** complete MASTER §10 (configurable multi-stage service workflows), §7/§14/§15 (agentic AI booking assistant with prompt-injection defense), guest-receipt auth hardening (Workstream A — closed out the Phase 9A interim work), manual↔AI continuity (Workstream D) and Workstream E integration over payments, kiosk, walk-ins, tracking, receipts, notifications and audit, Phase 0–8 untouched.
+
+#### Workstream A — receipt/QR security close-out (`tests/api/test_guest_receipt_security.py`, 30 tests)
+- `/qr_codes` static mount REMOVED; `/user/track/{token_id}` owner-only; kiosk own-QR via authorized `GET /tokens/{id}/qr?ref=`; nginx log format `$uri`; purpose-separated signed references (`PURPOSE_RECEIPT`); guest PII suppression in tracking.
+
+#### Workstream B — configurable multi-stage workflows (`app/services/workflow_service.py`, `app/routers/workflow.py`, migration `0018`)
+- org config CRUD (`/org/workflows*`, per-service workflows + `/org/workflows/list` JSON), booking auto-start hook, employee stage ops (`/employee/tokens/{id}/workflow*`: advance/skip/recall/complete/cancel + history), CAS-race safety (409), tenant isolation, tracking progress, `finalize_for_token_status` ledger close on complete/cancel/skip, B15 legacy single-stage guarantee.
+- Org UI: `templates/org/workflows.html` page + sidebar entry; employee dashboard Stage panel (`loadStagePanel`, recall with reason prompt); customer tracking renders the workflow block on `/public/track`.
+- Tests: `tests/api/test_workflows.py` (19 tests incl. the page-render + deterministic stale-CAS + 409-mapping), `tests/unit/test_migration_0018.py` (up/down/re-upgrade roundtrip).
+
+#### Workstream C — agentic AI booking (`app/services/ai_provider.py`, `app/services/ai_assistant_service.py`, `app/routers/ai.py`)
+- LLM reasoning is SEPARATE from authoritative backend tools; strict-JSON action protocol; tool registry delegating to `user_service`/`schedule_service`/catalogue/`token_service.book_token`.
+- USER-GATED confirmation (endpoint param `confirmed`, plus explicit `POST /ai/conversations/{id}/book`); price/slot revalidation at final booking; duplicate-safe (`ai_conv_{id}` idempotency + booked-status terminal guard); notification + audit integration.
+- Graceful unavailability; one-repair-round protocol; bounded history; prompt-injection defense surfaced in conversation and tool content.
+- Tests: `tests/api/test_ai_assistant.py` (20 tests) with a SCRIPTED mock provider (no paid external calls by design).
+
+#### Workstream D — manual↔AI continuity
+- `ai_conversations` state (mode/status/context/draft/booking); D1 manual→AI carry-in (`/ai/session` + booking-form "Continue with AI" link + `/user/assistant` page), D2 AI→manual prefill (`switch-mode`), D3 booked-conversation terminality, D4 unconfirmed drafts retained, D5 live revalidation, D6 owner-scoped state endpoint; UI at `templates/user/assistant.html`.
+
+#### Workstream E — integration guarantee
+- Workflow + AI code routed through the SAME `token_service.book_token` / `perform_token_action` paths — payments (nothing charged until checkout), kiosk/walk-in channels, tracking (`workflow` key optional — consumers unaffected), receipts, notifications (`notify_token_created`) and audit (`audit_service.log_audit_event`) all continue through their Phase 0-8 implementations. Full-suite regression run verifies the surfaces.
+
+- **Full-suite regression at Phase 9 delivery: 759 passed / 0 failed (Workstream B close-out run), with Workstream C/D suites added afterwards and a final full run recorded at delivery.**
+

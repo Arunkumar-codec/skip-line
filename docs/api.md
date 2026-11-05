@@ -525,7 +525,22 @@ GET /tokens/47/receipt      → PDF receipt (A6, with QR code)
 GET /tokens/47/qr           → QR code PNG image
 ```
 
-Both endpoints are accessible without authentication (public by design — allows kiosk guests to download).
+Authorization (QR-001/QR-002 hardening, Nov 4 2026 — HIGH finding remediation):
+
+- **User-owned tokens:** only the owning user's session (cookie or Bearer) may
+  download. Everyone else — including unauthenticated callers and other roles'
+  sessions — receives the same uninformative 404 as a nonexistent token, so a
+  guessed numeric token id never reveals whether an id exists.
+- **Guest tokens:** the numeric token id alone NEVER authorizes a download.
+  The caller must present the purpose-bound, HMAC-signed receipt reference
+  issued with the booking: `GET /tokens/{id}/receipt?ref=<signed ref>`
+  (constant-time verification, 24 h expiry, org+token bound; foreign-purpose
+  refs such as tracking QRs are rejected). The signed ref is returned in the
+  booking response (`receipt_ref`) and embedded in the kiosk confirmation link.
+- Guests downloading a receipt receive a PDF WITHOUT the guest's name (PII
+  protection); owner downloads of user-owned receipts are unaffected.
+- The former static `/receipts` file mount was removed: receipt PDFs are
+  served only through the authorized endpoint, never from storage paths.
 
 ---
 
@@ -668,6 +683,65 @@ tenant's current day (and inside the approved period when one was set).
 raises when the operator has no active approved shift — counter operations
 that need a desk (token issuance, payment collection, queue changes) call
 this guard (SHIFT-003 wiring is a separate Phase 4 task).
+
+---
+
+## Service Workflows (Phase 9)
+
+A workflow is optional per-service configuration (one workflow per service;
+services without one keep the single-counter flow). The API is organization-
+and employee-scoped; all stage data is org-defined configuration.
+
+### Organization: configuration (org session)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/org/workflows` | Create a workflow: `{service_id, name, description?, stages:[{code,name,position?,is_mandatory?,estimated_minutes?,counter_id?,description?}]}` (contiguous 1..n positions; validation failures 400). |
+| `GET` | `/org/workflows/list` | JSON list of the org's workflows (the HTML config page owns `GET /org/workflows`). |
+| `GET` | `/org/workflows/{id}` | One workflow incl. stages. |
+| `GET` | `/org/services/{service_id}/workflow` | The workflow attached to a service. |
+| `PUT` | `/org/workflows/{id}` | Update metadata and/or replace the whole stage list (codes are the stable identity). |
+| `DELETE` | `/org/workflows/{id}` | Deactivate; tokens in flight keep their stage history. |
+
+### Employee: stage operations (employee session + active shift)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/employee/tokens/{id}/workflow` | Stage progress view (`null` for single-stage services). |
+| `GET` | `/employee/tokens/{id}/workflow/history` | Append-only stage log (from/to codes, employee, reason). |
+| `POST` | `/employee/tokens/{id}/workflow/advance` | Move to the next stage; past the last stage completes the workflow. |
+| `POST` | `/employee/tokens/{id}/workflow/skip` | Skip the CURRENT stage (`reason` required when skippable; mandatory stages refuse with 400). |
+| `POST` | `/employee/tokens/{id}/workflow/recall` | `{target_stage_code, reason}` — send the customer back to an earlier stage (reason mandatory). |
+| `POST` | `/employee/tokens/{id}/workflow/complete` | Explicit terminal completion. |
+| `POST` | `/employee/tokens/{id}/workflow/cancel` | `{reason}` — exceptional exit (customer left). |
+
+Status codes: `409` when the stage changed concurrently (reload & retry),
+`403` no active shift, `404` foreign-tenant token/employee.
+
+Customer-facing tracking: `token_service.get_token_tracking` responses carry
+an optional `workflow` block (`current_stage`, ordered `stages` states and
+`stage_minutes_remaining`); `estimated_wait_minutes` semantics are unchanged.
+
+---
+
+## AI Booking Assistant (Phase 9)
+
+All endpoints require a USER session. The assistant is available only when
+the deployment configures an OpenAI-compatible provider (Decision 27):
+`AI_PROVIDER/AI_BASE_URL/AI_API_KEY/AI_MODEL`. Unconfigured → graceful
+"unavailable" replies; nothing ever fabricates data or books without the user.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/ai/session` | Start a conversation: `{mode:"ai"|"manual", manual_context?}` — D1, carries the manual form's selections in as DATA. |
+| `POST` | `/ai/conversations/{id}/message` | One user turn: `{message, confirmed}`. `confirmed` is the USER's booking authorization (never model-injectable). Returns `{reply, has_pending_draft, ...}`. |
+| `POST` | `/ai/conversations/{id}/book` | Execute the pending draft through `token_service.book_token` after live revalidation (price/slot) — idempotent by `ai_conv_{id}`. |
+| `POST` | `/ai/conversations/{id}/switch-mode` | `{mode}` → manual↔AI handoff with prefill payload (booked conversations switch read-only). |
+| `GET` | `/ai/conversations/{id}` | Owner-scoped state (mode/status/draft/last booking). |
+
+Booking lifecycle guarantees: preparation (`prepare_booking` tool) → user
+"Confirm & Book" → live revalidation → authoritative booking →
+`status=booked` terminality (duplicate-proof).
 
 ---
 

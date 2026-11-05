@@ -115,6 +115,20 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     identity_dir: str = "uploads/identities"
 
+    # ── AI booking assistant (Phase 9 — Workstreams C & D, MASTER §7/§14/§15) ─
+    # OpenAI-compatible HTTP chat endpoint. ALL fields default to EMPTY:
+    # an unconfigured provider means the AI assistant is "unavailable" and
+    # every endpoint degrades gracefully (never a 500, never a fabricated
+    # booking) — the manual flow remains fully usable.
+    # ai_provider:  "" (disabled) | "openai" | any OpenAI-compatible service
+    ai_provider: str = ""
+    ai_base_url: str = ""          # e.g. https://api.openai.com/v1
+    ai_api_key: str = ""           # NEVER logged; sent only to ai_base_url
+    ai_model: str = ""             # e.g. gpt-4o-mini (deployment-dependent)
+    ai_request_timeout_seconds: float = 20.0
+    ai_max_history_turns: int = 12  # bounded context (C11)
+    ai_max_tool_rounds: int = 6     # bounded tool loop per user message
+
     # ── Malware scanning (Phase 8 — SEC-003, local ClamAV) ───────────────────
     # Approved approach: LOCAL CLAMAV via the clamd INSTREAM protocol.
     # In production, run the clamav container/service and set

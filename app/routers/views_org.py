@@ -292,6 +292,29 @@ async def counters_page(request: Request, db: AsyncSession = Depends(get_db)):
     })
 
 
+# ── Phase 9 (Workstream B): Service Workflow configuration UI ─────────────────
+
+@router.get("/workflows", response_class=HTMLResponse)
+async def workflows_page(request: Request, db: AsyncSession = Depends(get_db)):
+    org, redir = await _get_org_or_redirect(request, db)
+    if redir:
+        return redir
+
+    from app.services import workflow_service
+    services = await org_service.list_services(db, org.id)
+    counters = await org_service.list_counters(db, org.id)
+    workflows = await workflow_service.list_workflows(db, org_id=org.id)
+
+    return templates.TemplateResponse("org/workflows.html", {
+        "request": request,
+        "current_org": org,
+        "active_page": "workflows",
+        "services": services,
+        "counters": counters,
+        "workflows": workflows,
+    })
+
+
 # ── Schedule manager (Phase 3: weekly operating hours + holiday calendar) ────
 #
 # Server-rendered panel wired to the SAME schedule_service CRUD the org API

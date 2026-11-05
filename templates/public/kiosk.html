@@ -200,8 +200,18 @@ async function issueToken() {
     document.getElementById('tokenMeta').innerHTML =
       `Queue position: <strong>${token.queue_position}</strong> &nbsp;·&nbsp; ` +
       `Booked at: <strong>${new Date(token.booked_at || token.created_at).toLocaleTimeString('en-IN')}</strong>`;
-    document.getElementById('qrImg').src = `/${token.qr_code_path}`;
-    document.getElementById('receiptLink').href = `/tokens/${token.id}/receipt`;
+    // Both the QR image and the receipt link use the AUTHORIZED endpoints
+    // (Phase 9 Workstream A1): the former static /qr_codes mount is removed,
+    // so the guest's own QR is fetched via GET /tokens/{id}/qr carrying the
+    // same purpose-bound receipt reference that authorizes the receipt.
+    const receiptRef = token.receipt_ref || '';
+    const refQs = receiptRef ? `?ref=${encodeURIComponent(receiptRef)}` : '';
+    document.getElementById('qrImg').src = `/tokens/${token.id}/qr${refQs}`;
+    // Guest receipts require the signed receipt reference (QR-001 hardening) —
+    // the numeric token id alone no longer authorizes a receipt download.
+    document.getElementById('receiptLink').href = receiptRef
+      ? `/tokens/${token.id}/receipt${refQs}`
+      : '#';
     goStep(4);
     startPrivacyCountdown();
   } catch(e) {

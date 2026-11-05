@@ -66,7 +66,13 @@ async def kiosk_book(
             booking_source="kiosk",
             client_reference=body.client_reference or idempotency_key,
         )
-        return APIResponse(message="Token issued", data=TokenRead.model_validate(token))
+        # QR-001 hardening: attach the signed receipt-download ref in the
+        # same response — without it, kiosk guests could never legitimately
+        # print their receipt (guest receipts can no longer be fetched by
+        # token id alone).
+        payload = TokenRead.model_validate(token)
+        payload.receipt_ref = token_service.guest_receipt_ref(token)
+        return APIResponse(message="Token issued", data=payload)
     except ValueError as e:
         msg = str(e)
         if msg.startswith("idempotency conflict"):

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.config import settings
 from app.schemas.common import PaginatedResponse
 from app.schemas.token import TokenRead
 from app.services import user_service, token_service
@@ -103,6 +104,48 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         "current_user": user,
         "active_page": "dashboard",
         "active_tokens": active,
+    })
+
+
+# ── AI booking assistant (Phase 9, Workstreams C & D) ─────────────────────────
+
+@router.get("/assistant", response_class=HTMLResponse)
+async def assistant(
+    request: Request,
+    org: int = None,
+    org_name: str = None,
+    service: int = None,
+    service_name: str = None,
+    counter: int = None,
+    counter_name: str = None,
+    slot_id: int = None,
+    slot_label: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """The AI chat page (C + D). Query params let the MANUAL booking form hand
+    its current selections over as `manual_context` (D1) — the AI then
+    continues from exactly where the user left off, and 'Switch to manual'
+    (D2) hands the draft back the other way."""
+    user, redir = await _get_user_or_redirect(request, db)
+    if redir:
+        return redir
+
+    manual_context = {k: v for k, v in {
+        "organization_id": org, "organization_name": org_name,
+        "service_id": service, "service_name": service_name,
+        "counter_id": counter, "counter_name": counter_name,
+        "slot_id": slot_id, "slot_label": slot_label,
+    }.items() if v not in (None, "")}
+
+    return templates.TemplateResponse("user/assistant.html", {
+        "request": request,
+        "current_user": user,
+        "active_page": "assistant",
+        "manual_context": manual_context,
+        "ai_available": bool(
+            settings.ai_provider and settings.ai_base_url
+            and settings.ai_api_key and settings.ai_model
+        ),
     })
 
 
@@ -241,17 +284,31 @@ async def logout():
     return resp
 
 
-# ── Public: Token tracking page ───────────────────────────────────────────────
+# ── Token tracking page (user portal) ────────────────────────────────────────
+# Phase 9 Workstream A2 (HIGH-finding class fix): this endpoint previously
+# rendered ANY token's tracking page from the bare numeric id with no owner
+# check. Now: requires the user session and enforces token ownership — a
+# non-owned, guest (user_id NULL) or nonexistent id all return the SAME
+# uninformative 404, so probing numeric ids never reveals token existence.
+# Guest tracking remains available via the purpose-bound signed reference at
+# GET /public/track/{ref} (QR-002), which is unchanged.
 
 @router.get("/track/{token_id}", response_class=HTMLResponse)
 async def track_page(token_id: int, request: Request, db: AsyncSession = Depends(get_db)):
+    user, redir = await _get_user_or_redirect(request, db)
+    if redir:
+        return redir
+
+    token = await db.get(Token, token_id)
+    if not token or token.user_id != user.id:
+        return HTMLResponse("<h3>Token not found</h3>", status_code=404)
+
     try:
         tracking = await token_service.get_token_tracking(db, token_id)
     except ValueError:
         return HTMLResponse("<h3>Token not found</h3>", status_code=404)
 
-    token = await db.get(Token, token_id)
-    org   = await db.get(Organization, token.organization_id) if token else None
+    org = await db.get(Organization, token.organization_id)
 
     from app.utils import signed_qr
 

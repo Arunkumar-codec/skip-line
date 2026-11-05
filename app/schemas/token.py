@@ -75,6 +75,32 @@ class TokenRead(BaseModel):
     completed_at: Optional[datetime]
     checked_in_at: Optional[datetime] = None
     created_at: datetime
+    # QR-001 hardening: signed receipt-download ref for guest tokens
+    # (None for user-owned tokens — authorized by the owner's session).
+    receipt_ref: Optional[str] = None
+
+
+class WorkflowStageProgress(BaseModel):
+    """One stage in the customer/employee progress view (Phase 9 §10/B11)."""
+    code: str
+    name: str
+    position: int
+    description: Optional[str] = None
+    is_mandatory: bool = True
+    estimated_minutes: int = 0
+    # pending | in_progress | completed | skipped
+    state: str = "pending"
+
+
+class WorkflowProgressRead(BaseModel):
+    """Condensed multi-stage progress carried on tracking payloads."""
+    workflow_id: int
+    workflow_name: str
+    # active | completed | cancelled
+    status: str
+    current_stage: Optional[dict] = None
+    stages: list[WorkflowStageProgress] = []
+    stage_minutes_remaining: int = 0
 
 
 class TokenTrackingResponse(BaseModel):
@@ -87,3 +113,6 @@ class TokenTrackingResponse(BaseModel):
     estimated_wait_minutes: int
     current_token_at_counter: Optional[str]
     counter_name: str
+    # Phase 9 Workstream B: present only when the token's service has a
+    # configured multi-stage workflow (absent/empty for legacy single-stage).
+    workflow: Optional[WorkflowProgressRead] = None

@@ -446,6 +446,14 @@ async def employee_scan_token_api(
 # ── PHY-001..004: Assisted Walk-in Booking ────────────────────────────────────
 
 
+def _walkin_token_payload(token) -> TokenRead:
+    """TokenRead plus the signed receipt-download ref for guest bookings
+    (QR-001 hardening; None for user-owned tokens — owner-session authorized)."""
+    payload = TokenRead.model_validate(token)
+    payload.receipt_ref = token_service.guest_receipt_ref(token)
+    return payload
+
+
 @router.get("/customers/search", response_model=APIResponse)
 async def search_walkin_customers_api(
     phone: str = Query(..., min_length=3),
@@ -494,7 +502,11 @@ async def book_walkin_token_api(
     return APIResponse(
         message="Walk-in token booked successfully",
         data={
-            "token": TokenRead.model_validate(token),
+            # QR-001 hardening: guest walk-in tokens receive a signed
+            # receipt-download ref (user-owned receive None) so the desk can
+            # hand the customer a printable receipt URL without exposing the
+            # receipt to anyone holding only the numeric token id.
+            "token": _walkin_token_payload(token),
             "payment_id": payment.id,
             "payment_status": payment.status,
             "payment_method": payment.payment_method,

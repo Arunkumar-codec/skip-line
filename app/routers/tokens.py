@@ -6,7 +6,7 @@ Token-specific endpoints: PDF receipt download, QR code, receipt generation.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_optional_user
 from app.services import token_service
-from app.utils import pdf_generator
+from app.utils import pdf_generator, qr_generator, signed_qr
 from models.counter import Counter
 from models.organization import Organization
 from models.service import Service
@@ -24,23 +24,64 @@ from models.user import User
 router = APIRouter()
 
 
-async def _assert_token_access(token: Token, user: User | None) -> None:
-    """Allow access if user owns the token OR if it's a guest token."""
-    if token.user_id is not None and (user is None or token.user_id != user.id):
-        raise HTTPException(status_code=403, detail="Access denied")
+# Uniform denial for receipt/QR downloads: a nonexistent token and a token
+# the caller may not access return the SAME 404 response, so probing an
+# enumerated numeric id never reveals whether an id exists (QR-002 tracking
+# precedent — "renders the same uninformative error so no token can be probed").
+_DENY = HTTPException(status_code=404, detail="Token not found")
+
+
+async def _assert_token_access(
+    token: Token, user: User | None, ref: Optional[str] = None
+) -> None:
+    """
+    Receipt/QR download authorization — HARDENED (HIGH finding, Nov 4 2026).
+
+    The numeric token id alone NEVER authorizes a guest download:
+
+    - User-owned tokens (`user_id` set): only the owning user's session
+      (cookie or Bearer) may download. Anyone else is denied — including
+      unauthenticated callers and sessions of other roles (org/employee/
+      admin tokens resolve to `user=None` here and are refused).
+    - Guest tokens (`user_id is None`): caller must present a valid,
+      purpose-bound, HMAC-signed receipt reference (`?ref=…`) issued with
+      the booking (`token_service.guest_receipt_ref` →
+      `signed_qr PURPOSE_RECEIPT`). Verification is constant-time
+      (`hmac.compare_digest` in signed_qr) and binds token id + org id;
+      missing/expired/tampered/mismatched refs are all denied identically.
+
+    Foreign-purpose refs (scan/track) can never satisfy the receipt purpose
+    because each purpose derives its own HMAC subkey, so a track ref
+    presented here fails signature verification.
+    """
+    if token.user_id is not None:
+        if user is None or user.id != token.user_id:
+            raise _DENY
+        return
+
+    status, payload = signed_qr.verify_token_ref(
+        ref or "", signed_qr.PURPOSE_RECEIPT
+    )
+    if status != signed_qr.STATUS_VALID:
+        raise _DENY
+    if payload.token_id != token.id or payload.org_id != token.organization_id:
+        raise _DENY
 
 
 @router.get("/{token_id}/receipt")
 async def download_receipt(
     token_id: int,
+    ref: Optional[str] = Query(default=None, alias="ref",
+                               description=("Signed receipt reference "
+                                            "(required for guest tokens)")),
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate (or return cached) PDF receipt for a token (QR-001)."""
     token = await db.get(Token, token_id)
     if not token:
-        raise HTTPException(status_code=404, detail="Token not found")
-    await _assert_token_access(token, user)
+        raise _DENY
+    await _assert_token_access(token, user, ref)
 
     # Always produce a receipt whose QR embeds the current signed reference —
     # cached receipts from before the signed-QR upgrade carry the obsolete
@@ -85,6 +126,14 @@ async def download_receipt(
     )
     token.qr_code_path = qr_path
 
+    # Guest-PII protection: receipts downloaded via a guest receipt ref
+    # (i.e., by anyone holding the ref, not necessarily the guest that
+    # booked) MUST NOT carry the guest's name — MASTER treats receipts as
+    # org/token/counter/date/position/QR content; a guest name on a
+    # ref-bearing document would leak personal data to whoever presents
+    # the ref. Owner downloads of user-owned tokens are unaffected.
+    receipt_guest_name = token.guest_name if token.user_id is not None else None
+
     receipt_path = await pdf_generator.generate_token_receipt(
         token_id=token.id,
         org_name=org.name if org else "Unknown",
@@ -94,7 +143,7 @@ async def download_receipt(
         queue_position=token.queue_position,
         booked_at=token.booked_at or token.created_at,
         qr_code_path=token.qr_code_path,
-        guest_name=token.guest_name,
+        guest_name=receipt_guest_name,
         branch_name=getattr(branch, "name", None) if branch else None,
         slot_label=slot_label,
         payment_label=payment_label,
@@ -115,18 +164,21 @@ async def download_receipt(
 @router.get("/{token_id}/qr")
 async def download_qr(
     token_id: int,
+    ref: Optional[str] = Query(default=None, alias="ref",
+                               description=("Signed receipt reference "
+                                            "(required for guest tokens)")),
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the QR code image for a token (regenerated — QR-002)."""
     token = await db.get(Token, token_id)
     if not token:
-        raise HTTPException(status_code=404, detail="Token not found")
+        raise _DENY
+    await _assert_token_access(token, user, ref)
 
     # Always regenerate: QR payload is a signed opaque reference whose
     # nonce/expiry must match the current signing scheme — older files
     # (pre-signed-QR scheme) are invalid for tracking.
-    from app.utils import qr_generator
     qr_path = await qr_generator.generate_token_qr(
         token_id=token.id, org_id=token.organization_id,
         counter_id=token.counter_id, user_id=token.user_id

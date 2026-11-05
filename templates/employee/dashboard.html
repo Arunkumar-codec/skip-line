@@ -213,6 +213,36 @@
         </div>
       </div>
 
+      <!-- Phase 9 (Workstream B): multi-stage service processing panel.
+           Rendered only when the currently-served token's service has a
+           configured workflow; loaded right after the queue data. -->
+      <div id="stagePanel" class="p-3 mb-3 rounded border d-none" style="background:#f8fbff">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <span class="text-xs text-muted text-uppercase fw-600">
+            <i class="bi bi-diagram-3 me-1"></i>Service Stages
+          </span>
+          <span class="badge bg-primary-subtle text-primary fw-600" id="stageCurrentBadge">—</span>
+        </div>
+        <div id="stageList" class="mb-2" style="font-size:.85rem"></div>
+        <div id="stageActions" class="d-none d-flex flex-wrap gap-1">
+          <button class="btn btn-primary btn-sm" onclick="stageAction('advance')">
+            <i class="bi bi-arrow-right me-1"></i>Next Stage
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="stageAction('skip')">
+            <i class="bi bi-skip-forward me-1"></i>Skip
+          </button>
+          <button class="btn btn-outline-warning btn-sm" onclick="openStageRecall()">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Recall
+          </button>
+          <button class="btn btn-outline-success btn-sm" onclick="stageAction('complete')">
+            <i class="bi bi-check2-circle me-1"></i>Complete
+          </button>
+          <button class="btn btn-outline-danger btn-sm" onclick="stageAction('cancel')">
+            <i class="bi bi-x-circle me-1"></i>Cancel
+          </button>
+        </div>
+      </div>
+
       <!-- Waiting Queue Table -->
       <h6 class="fw-700 text-xs text-uppercase text-muted mb-2">Waiting Queue</h6>
       <div class="table-responsive">
@@ -659,6 +689,7 @@ async function loadQueue(counterId) {
         </tr>
       `).join('');
     }
+    loadStagePanel();  // Phase 9 B: refresh the stage panel for the serving token
   } catch(e) {}
 }
 
@@ -693,10 +724,76 @@ async function actionCurrentToken(action) {
   }
 }
 
+// ── Phase 9 (Workstream B): multi-stage processing widget ───────────────────
+let stageWorkflowActive = false;
+
+async function loadStagePanel() {
+  const panel = document.getElementById('stagePanel');
+  if (!panel) return;
+  if (!currentlyServingTokenId) {
+    panel.classList.add('d-none');
+    return;
+  }
+  try {
+    const res = await apiRequest(`/employee/tokens/${currentlyServingTokenId}/workflow`, 'GET');
+    const data = res.data;
+    if (!data || !data.stages || data.stages.length === 0) {
+      panel.classList.add('d-none');  // single-stage service (B15)
+      return;
+    }
+    stageWorkflowActive = data.status === 'active';
+    panel.classList.remove('d-none');
+    document.getElementById('stageCurrentBadge').textContent =
+      data.current_stage ? `Now: ${data.current_stage.name}` : data.status;
+
+    document.getElementById('stageList').innerHTML = data.stages.map(s => {
+      const cls = s.state === 'completed' ? 'success' :
+                  s.state === 'in_progress' ? 'primary' :
+                  s.state === 'skipped' ? 'secondary' : 'light text-dark';
+      return `<div class="d-flex justify-content-between py-1 border-bottom">
+        <span><span class="fw-600">${s.position}. ${s.name}</span>
+          ${s.is_mandatory ? '<span class="text-muted text-xs">(required)</span>' : ''}</span>
+        <span class="badge bg-${cls}-subtle text-${cls}">${s.state.replace('_', ' ')}</span>
+      </div>`;
+    }).join('');
+
+    document.getElementById('stageActions').classList.toggle('d-none', !stageWorkflowActive);
+  } catch (e) {
+    panel.classList.add('d-none');
+  }
+}
+
+async function stageAction(action) {
+  if (!currentlyServingTokenId) return;
+  try {
+    await apiRequest(`/employee/tokens/${currentlyServingTokenId}/workflow/${action}`, 'POST', {});
+    showToast(`Stage ${action === 'advance' ? 'advanced' : action + 'led'}`, 'success');
+    loadStagePanel();
+  } catch (err) {
+    showToast(err.message || `Stage ${action} failed`, 'danger');
+  }
+}
+
+async function openStageRecall() {
+  const target = prompt('Recall customer to which earlier stage CODE? (e.g. registration)');
+  if (!target) return;
+  const reason = prompt('Reason for recall (required):');
+  if (!reason || !reason.trim()) { showToast('A reason is required to recall', 'warning'); return; }
+  try {
+    await apiRequest(`/employee/tokens/${currentlyServingTokenId}/workflow/recall`, 'POST',
+      { target_stage_code: target.trim().toLowerCase(), reason: reason.trim() });
+    showToast('Customer recalled to earlier stage', 'success');
+    loadStagePanel();
+  } catch (err) {
+    showToast(err.message || 'Recall failed', 'danger');
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   if (currentCounterId && (currentActiveShiftId !== null)) {
     loadQueue(currentCounterId);
     setInterval(() => loadQueue(currentCounterId), 15000);
+    setInterval(loadStagePanel, 15000);
   }
 });
 

@@ -1,0 +1,225 @@
+{% extends "shared/base.html" %}
+{% block title %}AI Booking Assistant{% endblock %}
+{% block sidebar %}{% include "shared/user_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_user.name[0].upper() }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_user.name }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header">{{ current_user.email }}</h6></li>
+    <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i>Profile</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title"><i class="bi bi-stars text-warning me-2"></i>AI Booking Assistant</h1>
+    <p class="page-subtitle">
+      Ask me to find a clinic, check a real time slot and book it.
+      Nothing is ever booked without your explicit Confirm&nbsp;&amp;&nbsp;Book.
+    </p>
+  </div>
+</div>
+
+{% if manual_context %}
+<div class="alert alert-info fade-in-up">
+  <i class="bi bi-arrow-left-right me-2"></i>
+  Carried over from the manual booking form:
+  <strong>{{ manual_context.organization_name }}</strong>
+  {% if manual_context.service_name %}· <strong>{{ manual_context.service_name }}</strong>{% endif %}
+  {% if manual_context.counter_name %}· {{ manual_context.counter_name }}{% endif %}
+  {% if manual_context.slot_label %}· slot {{ manual_context.slot_label }}{% endif %}
+</div>
+{% endif %}
+
+{% if not ai_available %}
+<div class="alert alert-warning fade-in-up">
+  <i class="bi bi-info-circle me-2"></i>
+  The AI assistant is not configured for this deployment. You can still search and book
+  <a href="/user/organizations">the normal way</a> — everything else works as usual.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="content-card p-4">
+      <div id="chatLog" style="max-height:55vh;overflow-y:auto"
+           class="d-flex flex-column gap-2 mb-3"></div>
+
+      <div id="confirmBar" class="d-none align-items-center justify-content-between
+           border rounded p-2 mb-2 bg-light">
+        <span class="text-sm fw-600" id="confirmText">Booking pending your confirmation</span>
+        <button class="btn btn-success btn-sm" onclick="confirmBooking()">
+          <i class="bi bi-check2-circle me-1"></i>Confirm &amp; Book
+        </button>
+      </div>
+
+      <div class="d-flex gap-2">
+        <input id="chatInput" class="form-control"
+               placeholder="e.g. Book a tooth extraction at Sunrise Dental tomorrow at 11"
+               maxlength="4000" onkeydown="if(event.key==='Enter')sendMessage()">
+        <button class="btn btn-primary px-3" onclick="sendMessage()">
+          <i class="bi bi-send"></i>
+        </button>
+      </div>
+      <div class="text-xs text-muted mt-2">
+        <i class="bi bi-shield-check me-1"></i>
+        Bookings execute through the standard secure pipeline; payments happen
+        separately at/after checkout. The assistant cannot confirm a booking for you.
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="content-card p-4">
+      <h5 class="fw-700 mb-3"><i class="bi bi-arrow-left-right me-2 text-primary"></i>Handoff</h5>
+      <p class="text-sm text-muted">Switch between the AI chat and the manual form without losing anything — selections, draft and price travel with you.</p>
+      <button class="btn btn-outline-primary w-100 mb-2" onclick="switchMode('manual')">
+        <i class="bi bi-file-earmark-text me-1"></i>Switch to manual form
+      </button>
+      <div id="manualPrefill" class="d-none border rounded p-2 bg-light text-sm"></div>
+
+      <div id="draftPanel" class="d-none border rounded p-2 mt-3 bg-light">
+        <span class="fw-600 text-xs text-muted text-uppercase">Pending draft</span>
+        <div id="draftBody" class="text-sm"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const aiAvailable = {{ 'true' if ai_available else 'false' }};
+let convId = null;
+let msg = new URLSearchParams(location.search);
+let manualCtx = {};
+["organization_id","organization_name","service_id","service_name",
+ "counter_id","counter_name","slot_id","slot_label"].forEach(k => {
+  if (msg.has(k) && msg.get(k) !== "") manualCtx[k] = msg.get(k);
+});
+
+function bubble(text, who) {
+  const log = document.getElementById('chatLog');
+  const div = document.createElement('div');
+  div.className = who === 'me'
+    ? 'align-self-end bg-primary text-white rounded px-3 py-2 text-sm'
+    : 'align-self-start bg-light border rounded px-3 py-2 text-sm';
+  div.style.maxWidth = '85%';
+  // Rendered as TEXT, never HTML: reply/message content can carry names and
+  // data from external inputs (org/service/counter names supplied by org
+  // admins, query-string values, LLM output) — inserting it as HTML would
+  // allow script injection into the chat log.
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function showConfirmBar(draft) {
+  const bar = document.getElementById('confirmBar');
+  if (!draft) { bar.classList.add('d-none'); bar.classList.remove('d-flex'); return; }
+  document.getElementById('confirmText').textContent =
+    (draft.service_name || 'Service') + ' · ' +
+    (draft.counter_name || '') +
+    (draft.quoted_price ? ' · ₹' + draft.quoted_price : '');
+  bar.classList.remove('d-none'); bar.classList.add('d-flex');
+  const panel = document.getElementById('draftPanel');
+  panel.classList.remove('d-none');
+  document.getElementById('draftBody').textContent = JSON.stringify(draft, null, 2);
+}
+
+async function startSession() {
+  const res = await fetch('/ai/session', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: 'ai',
+      manual_context: Object.keys(manualCtx).length ? manualCtx : null}),
+  });
+  const data = await res.json().then(r => r.data);
+  convId = data.conversation_id;
+  bubble(data.reply, 'ai');
+}
+
+async function sendMessage(text) {
+  if (!aiAvailable) { bubble('The assistant is unavailable right now — manual booking still works.', 'ai'); return; }
+  const input = document.getElementById('chatInput');
+  const body = text || input.value.trim();
+  if (!body) return;
+  bubble(body, 'me');
+  input.value = '';
+  try {
+    const res = await fetch(`/ai/conversations/${convId}/message`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: body, confirmed: false}),
+    });
+    const out = await res.json();
+    const data = out.data || {};
+    const err = data.detail || (out.detail);
+    if (err && !data.reply) { bubble(err, 'ai'); return; }
+    bubble(data.reply, 'ai');
+    showConfirmBar(data.draft || (data.has_pending_draft ? undefined : undefined));
+    if (data.has_pending_draft) await refreshDraft();
+    if (data.booked) {
+      document.getElementById('confirmBar').classList.add('d-none');
+      bubble('✔ Booked' + (data.token_number ? ' — token ' + data.token_number : '') +
+        '. Payment happens separately.', 'ai');
+    }
+  } catch (e) {
+    bubble('The assistant is unavailable right now — manual booking still works.', 'ai');
+  }
+}
+
+async function refreshDraft() {
+  const st = await (await fetch(`/ai/conversations/${convId}`)).json();
+  if (st.data && st.data.draft) showConfirmBar(st.data.draft);
+}
+
+async function confirmBooking() {
+  const res = await fetch(`/ai/conversations/${convId}/book`, {method: 'POST'});
+  const data = (await res.json()).data;
+  if (data.booked) {
+    document.getElementById('confirmBar').classList.add('d-none');
+    bubble('✔ Booking confirmed — token ' + (data.token_number || data.token_id) +
+      '. Pay at the counter or online from your bookings page.', 'ai');
+  } else {
+    bubble(data.error || data.message || 'Could not book right now.', 'ai');
+  }
+}
+
+async function switchMode(mode) {
+  const res = await fetch(`/ai/conversations/${convId}/switch-mode`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: mode}),
+  });
+  const data = (await res.json()).data;
+  if (mode === 'manual') {
+    const box = document.getElementById('manualPrefill');
+    box.classList.remove('d-none');
+    const p = data.prefill || {};
+    // Values can carry entity names (org/service/counter) and hand-written
+    // slot labels — escaped like the chat text, never inserted raw.
+    const esc = v => {
+      const d = document.createElement('div');
+      d.textContent = v;
+      return d.innerHTML;
+    };
+    box.innerHTML = Object.keys(p).length
+      ? '<strong>Carried to the manual form:</strong><br>' +
+        Object.entries(p).filter(([k, v]) => v !== null && v !== undefined)
+          .map(([k, v]) => `${esc(k)}: ${esc(v)}`).join('<br>')
+      : 'No selections yet — the manual form starts fresh.';
+  }
+}
+
+startSession();
+document.getElementById('chatInput').disabled = !aiAvailable;
+</script>
+{% endblock %}

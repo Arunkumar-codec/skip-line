@@ -190,6 +190,11 @@
       </div>
       <div class="modal-footer border-0 pt-0" id="bookFooter">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <!-- Phase 9 (D1): hand the manual selections to the AI assistant -->
+        <a id="continueWithAi" class="btn btn-outline-warning"
+           href="/user/assistant" title="Let the AI assistant continue from here">
+          <i class="bi bi-stars me-1"></i>Continue with AI
+        </a>
         <button class="btn btn-primary" id="confirmBookBtn" onclick="confirmBook()">
           <span class="spinner-border spinner-border-sm me-1 d-none" id="bookSpin"></span>
           Confirm Booking
@@ -213,6 +218,8 @@ async function openBookModal(orgId, orgName) {
   document.getElementById('bookStep1').classList.remove('d-none');
   document.getElementById('bookStep2').classList.add('d-none');
   document.getElementById('bookFooter').classList.remove('d-none');
+  // Phase 9 (D1): the AI handoff link carries what the user has chosen so far
+  document.getElementById('continueWithAi').href = buildAiHandoff(orgId, orgName);
   document.getElementById('subServicesSection').classList.add('d-none');
   document.getElementById('serviceRollupBox').classList.add('d-none');
   document.getElementById('serviceKycAlert').classList.add('d-none');
@@ -344,6 +351,29 @@ function recalculateRollup() {
   document.getElementById('rollupPrice').textContent = `₹${totalPrice.toFixed(2)}`;
   document.getElementById('rollupTime').textContent = `${totalMins} min`;
   document.getElementById('serviceRollupBox').classList.remove('d-none');
+  // Phase 9 (D1): refresh the AI handoff with the freshest selections
+  document.getElementById('continueWithAi').href = buildAiHandoff(
+    currentOrgId, document.getElementById('bookModalTitle').textContent
+      .replace('Book Token — ', ''));
+}
+
+// Phase 9 (D1): manual→AI context transfer (helpers validated + rate-diagrammed server-side)
+function buildAiHandoff(orgId, orgName) {
+  const svcEl = document.getElementById('bookServiceId');
+  const ctrEl = document.getElementById('bookCounterId');
+  const params = new URLSearchParams();
+  if (orgId) { params.set('org', orgId); params.set('org_name', orgName || ''); }
+  if (svcEl && svcEl.value) {
+    params.set('service', svcEl.value);
+    params.set('service_name', svcEl.selectedOptions[0]
+      ? svcEl.selectedOptions[0].textContent : '');
+  }
+  if (ctrEl && ctrEl.value) {
+    params.set('counter', ctrEl.value);
+    params.set('counter_name', ctrEl.selectedOptions[0]
+      ? ctrEl.selectedOptions[0].textContent : '');
+  }
+  return `/user/assistant${params.toString() ? '?' + params.toString() : ''}`;
 }
 
 async function confirmBook() {

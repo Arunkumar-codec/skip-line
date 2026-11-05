@@ -1,0 +1,178 @@
+{% extends "shared/base.html" %}
+{% block title %}Service Workflows{% endblock %}
+{% block sidebar %}{% include "shared/org_sidebar.html" %}{% endblock %}
+
+{% block topnav_user %}
+<div class="dropdown">
+  <button class="btn btn-sm btn-ghost d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+    <div class="rounded-circle bg-success d-flex align-items-center justify-content-center text-white"
+         style="width:32px;height:32px;font-size:.8rem;font-weight:700">
+      {{ current_org.name[0].upper() if current_org else 'O' }}
+    </div>
+    <span class="d-none d-md-inline text-sm fw-600">{{ current_org.name if current_org else '' }}</span>
+    <i class="bi bi-chevron-down text-xs"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+    <li><h6 class="dropdown-header text-truncate" style="max-width:200px">{{ current_org.email if current_org else '' }}</h6></li>
+    <li><a class="dropdown-item" href="/org/profile"><i class="bi bi-building-gear me-2"></i>Profile</a></li>
+    <li><a class="dropdown-item" href="/org/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item text-danger" href="/auth/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+  <div>
+    <h1 class="page-title">Service Workflows</h1>
+    <p class="page-subtitle">Configure ordered multi-stage flows (e.g. Registration → Measurement → Counselling → Pharmacy → Advice). Services without a workflow keep the single-counter flow.</p>
+  </div>
+</div>
+
+{% if error_msg %}<div class="alert alert-danger">{{ error_msg }}</div>{% endif %}
+
+<div class="row g-3">
+  <!-- Existing workflows -->
+  <div class="col-lg-7">
+    <div class="content-card p-4">
+      <h5 class="fw-700 mb-3"><i class="bi bi-diagram-3 me-2 text-primary"></i>Configured Workflows</h5>
+      {% if workflows %}
+        {% for wf in workflows %}
+        <div class="border rounded p-3 mb-3 {% if not wf.is_active %}opacity-50{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+              <span class="fw-700">{{ wf.name }}</span>
+              <span class="text-xs text-muted ms-2">{{ wf.service.name if wf.service else 'Service #' ~ wf.service_id }}</span>
+            </div>
+            <div class="d-flex gap-2">
+              {% if wf.is_active %}
+              <span class="badge bg-success-subtle text-success">Active</span>
+              {% else %}
+              <span class="badge bg-secondary-subtle text-secondary">Inactive</span>
+              {% endif %}
+              <button class="btn btn-outline-danger btn-sm" onclick="deactivateWorkflow({{ wf.id }})">
+                <i class="bi bi-power me-1"></i>Deactivate
+              </button>
+            </div>
+          </div>
+          <div class="d-flex flex-wrap gap-1">
+            {% for stage in wf.stages %}
+            <span class="badge bg-primary-subtle text-primary py-2 px-2" title="{{ stage.code }}">
+              {{ stage.position }}. {{ stage.name }}
+              {% if stage.is_mandatory %}<i class="bi bi-lock-fill text-xs" title="Mandatory"></i>
+              {% else %}<i class="bi bi-unlock text-xs" title="Skippable"></i>{% endif %}
+            </span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-center text-muted py-4">
+          <i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>
+          No workflows configured — all services use the single-stage flow.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Create workflow -->
+  <div class="col-lg-5">
+    <div class="content-card p-4">
+      <h5 class="fw-700 mb-3"><i class="bi bi-plus-circle me-2 text-primary"></i>New Workflow</h5>
+      <div class="alert alert-danger d-none" id="wfError"></div>
+      <div class="mb-2">
+        <label class="form-label text-xs fw-600">Service</label>
+        <select id="wfService" class="form-select">
+          {% for s in services %}
+          <option value="{{ s.id }}">{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-2">
+        <label class="form-label text-xs fw-600">Workflow name</label>
+        <input id="wfName" class="form-control" placeholder="Patient Visit Flow">
+      </div>
+      <label class="form-label text-xs fw-600 mt-2">Stages (ordered)</label>
+      <div id="stageRows"></div>
+      <button class="btn btn-sm btn-outline-primary mb-2" onclick="addStageRow()">
+        <i class="bi bi-plus-lg me-1"></i>Add Stage
+      </button>
+      <div>
+        <button class="btn btn-primary w-100" onclick="createWorkflow(this)">
+          <i class="bi bi-check-lg me-1"></i>Create Workflow
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Prefill an example 5-stage flow (editable illustration — nothing is hardcoded server-side)
+const EXAMPLE_STAGES = [
+  {code: 'registration', name: 'Registration', is_mandatory: true},
+  {code: 'measurement', name: 'Weight & Height', is_mandatory: true, estimated_minutes: 5},
+  {code: 'counselling', name: 'Counselling', is_mandatory: false, estimated_minutes: 10},
+  {code: 'pharmacy', name: 'Pharmacy', is_mandatory: true, estimated_minutes: 5},
+  {code: 'prescription', name: 'Prescription Advice', is_mandatory: true, estimated_minutes: 5},
+];
+
+function addStageRow(stage = {code:'', name:'', is_mandatory: true, estimated_minutes: 0}) {
+  const wrap = document.getElementById('stageRows');
+  const idx = wrap.children.length + 1;
+  const row = document.createElement('div');
+  row.className = 'border rounded p-2 mb-2 bg-light';
+  row.innerHTML = `
+    <div class="row g-1 align-items-center">
+      <div class="col-1 text-center fw-600 text-muted text-xs">${idx}</div>
+      <div class="col-4"><input class="form-control form-control-sm stage-code" placeholder="code" value="${stage.code}"></div>
+      <div class="col-4"><input class="form-control form-control-sm stage-name" placeholder="Stage name" value="${stage.name}"></div>
+      <div class="col-2"><input class="form-control form-control-sm stage-min" type="number" min="0" title="minutes" value="${stage.estimated_minutes || 0}"></div>
+      <div class="col-1 text-center">
+        <input class="form-check-input stage-mandatory" type="checkbox" ${stage.is_mandatory ? 'checked' : ''} title="Mandatory">
+      </div>
+    </div>`;
+  wrap.appendChild(row);
+}
+
+EXAMPLE_STAGES.forEach(s => addStageRow(s));
+
+async function createWorkflow(btn) {
+  const err = document.getElementById('wfError');
+  err.classList.add('d-none');
+  const rows = [...document.querySelectorAll('#stageRows > div')];
+  const stages = rows.map((row, i) => ({
+    code: row.querySelector('.stage-code').value.trim(),
+    name: row.querySelector('.stage-name').value.trim(),
+    position: i + 1,
+    is_mandatory: row.querySelector('.stage-mandatory').checked,
+    estimated_minutes: parseInt(row.querySelector('.stage-min').value || '0'),
+  })).filter(s => s.code && s.name);
+
+  const payload = {
+    service_id: parseInt(document.getElementById('wfService').value),
+    name: document.getElementById('wfName').value.trim(),
+    stages,
+  };
+  try {
+    const res = await fetch('/org/workflows', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not create workflow');
+    location.reload();
+  } catch (e) {
+    err.textContent = e.message; err.classList.remove('d-none');
+  }
+}
+
+async function deactivateWorkflow(id) {
+  if (!confirm('Deactivate this workflow? Tokens already in flight keep their stage history.')) return;
+  const res = await fetch(`/org/workflows/${id}`, {method: 'DELETE'});
+  if (!res.ok) { const d = await res.json(); alert(d.detail || 'Failed'); return; }
+  location.reload();
+}
+</script>
+{% endblock %}

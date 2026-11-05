@@ -225,6 +225,46 @@ FastAPI will be equipped with standard CSRF protection:
 
 ---
 
+### 4.5 Phase 9 Extensions: Configurable Workflows & the Agentic AI Assistant (Nov 2026)
+
+Two new planes attach to the architecture WITHOUT changing the authoritative
+core (tokens, payments, ledger, capacity):
+
+```
+              ┌────────────────────────────────────────────────────────┐
+ Org config → │ service_workflows / workflow_stages (per-SERVICE data)  │
+              │ token_workflow_states (CAS) + token_stage_logs (todo)   │
+              └───────────────┬────────────────────────────────────────┘
+                              │ maybe_start / advance / finalize hooks
+                              ▼
+   token_service.book_token / perform_token_action  ← THE authoritative core
+                              ▲
+                              │ tools (read/write, same services)
+ new planes → ┌───────────────┴────────────────────────────────────────┐
+              │ ai_assistant_service  ── actions ──▶ LLM (httpx)       │
+              │ ai_conversations (mode/status/context/draft)           │
+              └────────────────────────────────────────────────────────┘
+```
+
+- **Workflow plane** (migration `0018`): `service_workflows` + `workflow_stages`
+  are per-tenant configuration; `token_workflow_states` carries an optimistic
+  CAS `version` so concurrent employee transitions serialize; `token_stage_logs`
+  is an append-only, point-in-time snapshot ledger. The layer hooks into the
+  booking and queue-action paths — it never duplicates their logic.
+- **AI plane** (`app/services/ai_provider.py`, `ai_assistant_service.py`,
+  `routers/ai.py`): the LLM is a strict-JSON REASONING plane. It can only emit
+  protocol actions; ALL data and writes flow through backend tools that call
+  the SAME services as manual flows (`user_service.search_organizations`,
+  `schedule_service`, `token_service.book_token`). The user's booking
+  confirmation is an HTTP-level fact (`confirmed` param / dedicated book
+  route) — structurally outside the model's reach. Conversations persist
+  continuity state (`ai_conversations`), making manual↔AI handoff lossless
+  in both directions. Unconfigured provider ⇒ graceful unavailable mode.
+- **Security posture carried into Phase 9:** signed purpose-bound references
+  for guest artifacts (receipts/QR; both static mounts removed), owner-only
+  `/user/track/{token_id}`, `$uri`-only access logs, guest PII suppression,
+  prompt-injection containment by architecture rather than by prompt alone.
+
 ## 5. Real-Time Synchronization & WebSocket Bus
 
 ### 5.1 Restoring the Broadcast Pipeline

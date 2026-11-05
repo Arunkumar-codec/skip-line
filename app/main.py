@@ -40,6 +40,8 @@ from app.routers import (
     websocket as ws_router,
     employee as employee_router,
     trust as trust_router,
+    workflow as workflow_router,
+    ai as ai_router,
     views_admin,
     views_org,
     views_user,
@@ -141,8 +143,20 @@ def create_app() -> FastAPI:
 
     # ── Static files ─────────────────────────────────────────────────────────
     app.mount("/static", StaticFiles(directory="static"), name="static")
-    app.mount("/qr_codes", StaticFiles(directory="qr_codes"), name="qr_codes")
-    app.mount("/receipts", StaticFiles(directory="receipts"), name="receipts")
+    # NOTE (QR-001 hardening, HIGH finding Nov 4 2026 → Phase 9 Workstream A):
+    # the former static /receipts AND /qr_codes mounts are REMOVED.
+    # - /receipts served any token's receipt PDF at the predictable
+    #   unauthenticated path /receipts/receipt_token_{id}.pdf — bypassing
+    #   receipt authorization entirely.
+    # - /qr_codes served any token's QR image at the predictable
+    #   /qr_codes/token_{id}_org_{org}.png filename; the embedded signed
+    #   tracking reference then lets a stranger live-track that token.
+    # Both artifacts are now served ONLY through the authorized endpoints
+    # GET /tokens/{id}/receipt and GET /tokens/{id}/qr (owner session or a
+    # purpose-bound signed guest reference). The kiosk displays the guest's
+    # just-issued QR via the authorized endpoint carrying the receipt ref.
+    # Remaining documented adjacency: none — GET /user/track/{token_id} was
+    # hardened to owner-only in Phase 9 Workstream A2 (app/routers/views_user.py).
 
     # ── Routers ──────────────────────────────────────────────────────────────
     app.include_router(auth_router.router,          prefix="/auth",          tags=["Auth"])
@@ -154,6 +168,8 @@ def create_app() -> FastAPI:
     app.include_router(payments_router.router,      prefix="/payments",      tags=["Payments"])
     app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
     app.include_router(employee_router.router,        prefix="/employee",      tags=["Employee Ops"])
+    app.include_router(workflow_router.router,                                  tags=["Workflows"])
+    app.include_router(ai_router.router,                                        tags=["AI Assistant"])
     # Phase 7: absolute-path routes (/user|org|admin/public /api/...) — no prefix.
     app.include_router(trust_router.router,                                     tags=["Trust"])
     app.include_router(ws_router.router,            prefix="/ws",            tags=["WebSocket"])

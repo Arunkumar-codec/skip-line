@@ -137,6 +137,35 @@
     </div>
   </div>
 
+  {% if tracking.workflow %}
+  <!-- Phase 9 (Workstream B): multi-stage service progress (B11) -->
+  <div class="card mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <span class="fw-600">{{ tracking.workflow.workflow_name }} — Stages</span>
+      {% if tracking.workflow.current_stage %}
+      <span class="badge bg-primary">Now: {{ tracking.workflow.current_stage.name }}</span>
+      {% else %}
+      <span class="badge bg-secondary">{{ tracking.workflow.status }}</span>
+      {% endif %}
+    </div>
+    <div class="card-body py-2">
+      {% for stage in tracking.workflow.stages %}
+      <div class="d-flex justify-content-between align-items-center py-1 {% if not loop.last %}border-bottom{% endif %}">
+        <span class="small">
+          <span class="fw-600">{{ loop.index }}. {{ stage.name }}</span>
+          {% if stage.is_mandatory %}<span class="text-muted small">(required)</span>{% endif %}
+        </span>
+        <span class="badge
+          {% if stage.state == 'completed' %}bg-success
+          {% elif stage.state == 'in_progress' %}bg-primary
+          {% elif stage.state == 'skipped' %}bg-secondary
+          {% else %}bg-light text-dark{% endif %}">{{ stage.state.replace('_', ' ') }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Actions (user portal only — the public signed-ref page has no session) -->
   {% if token_id is defined and token_id %}
   <div class="d-flex gap-2 mb-4">
