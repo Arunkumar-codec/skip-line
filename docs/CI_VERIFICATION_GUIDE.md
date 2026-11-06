@@ -123,8 +123,9 @@ path; MySQL is exercised by the migration job).
 Expected outputs:
 
 - Step summary shows the count lines, e.g.
-  `xxx passed, y skipped, z warnings` (approximately 797 collected;
-  investigate every failure — do not weaken tests to obtain green).
+  `xxx passed, y skipped, z warnings` (857 collected on the Nov 6 hosted
+  run: 857 passed, 715 warnings; investigate every failure — do not weaken
+  tests to obtain green).
 - Artifacts uploaded `always()`: `pytest-results.xml` (JUnit) and
   `pytest-output.txt` for failed-run post-mortems.
 
@@ -144,6 +145,40 @@ Expected outputs:
 4. Distinguish *skipped-with-reason* (e.g. Redis unreachable if the service
    failed to start before the skip check ran) from *missing coverage* —
    a silently skipped integration test is not a PASS.
+
+### 7.1 Hosted-run observations (Nov 6, real findings)
+
+The first activation (commit `c0a3…`→`b628077`) surfaced these genuine
+issues, all diagnosed **without repository-log access** (the logs and
+artifact APIs require an admin token, which this environment does not
+have — failures were surfaced through `::error::`/`::notice::` check-run
+annotations read via the public check-runs API):
+
+1. **razorpay + Python 3.12 (`ModuleNotFoundError: pkg_resources`)** —
+   razorpay 1.4.2 imports `pkg_resources` at import time but does not
+   declare setuptools; Python 3.12 venvs no longer bundle setuptools.
+   Fixed with the pinned `setuptools==75.8.0` in `requirements.txt`
+   (documented in-file). Any routine that imports `app.main` →
+   `payment_service` hits this.
+2. **GitHub Actions' default bash runs `bash -eo pipefail`** — a capture
+   block like `pytest | tee f; code=${PIPESTATUS[0]}` is aborted by errexit
+   before it runs. The `|| code=$?` pattern the workflow now uses is the
+   errexit-safe way to capture and annotate failures.
+3. **OS environment variables bypass `_env_file=None`** — the workflow's
+   `DB_PASSWORD` job env made the "missing DB password in production"
+   test see a value. Tests that exercise an *absence* of configuration
+   must `monkeypatch.delenv(<VAR>, raising=False)` (see both tests in
+   `tests/test_config_security.py` that do this).
+4. **Unconfigured provider → `SUPPRESSED` outbox path** — with no `.env`
+   on CI, `mail_username` is empty and outbox rows are written `SUPPRESSED`
+   instead of `PENDING`. Tests that need a provider must configure it
+   explicitly under `monkeypatch` (`tests/unit/test_notification_service.py`).
+5. **FK audit is an exact declared-set comparison** — the former
+   `>= 10 distinct (table, delete_rule) pairs` was unachievable by
+   construction: 0018 declares 14 FKs which collapse to at most 9 distinct
+   pairs. The audit now asserts equality against the 14 declared FKs
+   (`DECLARED_FKS` in `scripts/ci_migration_chain_check.py`) — any missing,
+   dropped, or unexpected FK is named in the failure message.
 
 ## 8. Reproducing CI results locally (authorized machines only)
 

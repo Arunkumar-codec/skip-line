@@ -35,6 +35,17 @@ passing**. Essential checks that could **not** be completed on this machine:
    baseline suite plus the targeted, greenlet-free re-verifications
    (§1.5–§1.7).
 
+**Session-8 update (Nov 6, hosted CI):** once the CI workflow was
+authorized and pushed, GitHub Actions executed the complete 857-test suite
+on a hosted runner (real async fixtures; the greenlet block applies only to
+this workstation): **857 passed, 0 failed, 715 warnings**, plus the MySQL
+migration chain 0001→0018 up/down/re-up ALL-OK (§5 rows 36–37, runs
+`42261999029` and `42262780689`). Automated pytest/migration verification
+is now complete; the **six UI acceptance flows (§1.4)** and the
+**live AI provider call (§1.2)** remain unverified, so the status stays
+**VERIFICATION INCOMPLETE**. Production deployment is still **not
+authorized**.
+
 Production deployment is **not authorized** until the outstanding items in
 §6 (and the §7 approved-environment checklist) are resolved.
 
@@ -247,9 +258,19 @@ printing values), `docker-compose.yml`, `Dockerfile` target usage,
   was 8.0.46; `docs/` MySQL-version references consistent (both 8.x; see
   ledger row for the reconciliation reminder).
 
-### 1.6 Full-suite re-run — ⛔ BLOCKED (Nov 6)
+### 1.6 Full-suite re-run — ⛔ BLOCKED locally (Nov 6) · ✅ EXECUTED on hosted CI (Nov 6)
 
-After the policy change, `pytest` in-memory-SQLite setup fails at
+**Hosted resolution (later the same day):** after the CI workflow was
+authorized, committed and pushed, GitHub Actions executed the complete suite
+on `ubuntu-latest` (Python 3.12, real async fixtures with greenlet — the
+module this workstation's Code Integrity policy blocks): **857 passed,
+0 failed, 0 errors, 0 skipped** (with the MySQL migration chain 0001→0018
+up/down/re-up ALL-OK, 14/14 declared FKs, 9/9 indexes). See §5 ledger rows
+36–37 for the full run chain (runs #1–#4 failed honestly during
+diagnostics; #5 and #6 are green). UI acceptance (§1.4) and the AI live
+provider (§1.2) remain unverified, so the overall status is unchanged.
+
+After the local policy change, `pytest` in-memory-SQLite setup fails at
 `greenlet_spawn` import. The full 779/775 suite (and any DB-backed test) can
 only be re-run once the workstation permits the module (signing/policy
 exemption) or on an allowed machine. Targeted verifications that ran:
@@ -475,6 +496,8 @@ auth, scoped RBAC, and the LLM never possessing booking authority.
 | 33 | **CI environment prepared** (workflow + guide + CI migration script; `aiosqlite` dependency fix in `requirements.txt`) | Nov 6 (session 5) | `.github/workflows/production-readiness-tests.yml` + `docs/CI_VERIFICATION_GUIDE.md` + `scripts/ci_migration_chain_check.py`; YAML statically validated (structure, explicit push/PR/workflow_dispatch events, minimal `contents: read` permissions, health-gated disposable services, no secrets referenced); **no hosted run executed — awaiting explicit user activation**; this changes no test results | static/local |
 | 34 | **CI pre-activation review** — corrections applied before first activation (no behavior marked passed) | Nov 6 (session 6) | Workflow: quoted `"on":` key (YAML 1.1 parsers coerced bare `on` to boolean `True`) and `set -o pipefail` + `tee` for pytest (a failed run's exit code was previously masked by the trailing echo) — re-validated with `check-jsonschema` against GitHub's official `github-workflow.json` schema → "ok". Migration script: prefix-based DB gate replaced with an **exact allowlist** (`ALLOWED_MIGRATION_DB = "skipline_ci_migrate"`; production-like/empty/all other names refused before any connection), host restricted to loopback, `DB_PORT` validated 1–65535, non-empty synthetic user/password required, and every `DROP` routed through `drop_disposable_check()` inside a `try/finally` teardown so no exception path can drop an unrelated DB; module made side-effect-free for hermetic import. New gate tests `tests/test_ci_migration_gate.py`: **53/53 passed** (`pytest --noconftest`, synthetic values only). Local smoke: non-allowlisted name refused pre-connection; valid config → controlled greenlet failure (expected on this workstation), disposable DB dropped, exit 1, password/URL redacted in log, **no `skipline_ci*` DB remained on the server**. Dependency check: `aiosqlite==0.22.1` + `greenlet==3.5.2` pins consistent with SQLAlchemy 2.0.30 / Python 3.12. **This is preparation-review evidence only — the ~720 DB-backed tests remain BLOCKED and the full suite is NOT passed; hosted CI still requires explicit user activation.** | static/local |
 | 35 | **Final CI destructive-safety review** (pre-activation, read-only + genuine-defect fix) | Nov 6 (session 7) | Found & fixed a true defect in `scripts/ci_migration_chain_check.py`: setup previously executed an unconditional `DROP DATABASE IF EXISTS skipline_ci_migrate` before creation — a pre-existing DB from any other source would have been destroyed. Now: `refuse_if_preexisting()` reads `SHOW DATABASES` and **refuses + preserves** any pre-existing DB (no DDL issued); a `created_this_run` ownership flag plus `teardown_allowed()`/`perform_drop()` gate **every** teardown — only the exact allowlist name, only if this run created it. Proven end-to-end on disposable MySQL 8.0.46: pre-seeded `skipline_ci_migrate` with a marker table → script refused (exit 1) → DB **still existed, marker intact** afterward. Normal-flow smoke re-verified (create → expected greenlet failure → owned-DB dropped → redacted log → no leak). Hermetic gate tests extended: **60/60 passed** (`pytest tests/test_ci_migration_gate.py -v --noconftest`; includes new ownership/preservation cases: refuse-if-preexisting, owned-vs-unowned teardown, exact-DDL recording, guard-fires-before-engine-creation). Workflow comments aligned with the hardened gate; `check-jsonschema` re-run → "ok"; `actionlint` not installed (documented limitation; not downloaded — Application-Control risk). No hosted run triggered; **full suite still NOT passed; status remains VERIFICATION INCOMPLETE.** | static/local |
+| 36 | **Authorized CI commit + push + hosted runs #1–#4 (DIAGNOSTIC, honest failures)** | Nov 6 (session 8) | Commit `c0a30e59f9…` "ci: add hardened production readiness verification" (exactly the 10 reviewed paths, 2296 insertions) pushed to `origin/main` after the 78 hermetic tests passed and a secret scan was clean; remote was at expected `b7006d9` (no force push). Hosted evidence channel: GitHub's job-log/artifact APIs require admin tokens (none available in this environment), so failures were surfaced via `::error::` check-run annotations (commits `ada357f`, `b556d30` — diagnostics only, no test changes) read through the public check-runs API. Runs: #1 `42247780525` (c0a30e5) both jobs FAILED (pytest exit 4: `import razorpay` → `pkg_resources` missing on Python 3.12 — razorpay 1.4.2 imports `pkg_resources` but declares only `requests`, and py3.12 venvs no longer bundle setuptools; migration exit 1). #2/#3 `42249367084`/`42250169820`: root causes confirmed. Fixes pushed: `62abd35` (`setuptools==75.8.0` pin in `requirements.txt` — PyPI-verified, still ships pkg_resources; run #4 `42251050860` then ran **855 passed / 2 failed** real results) and `df8b712`: (a) `test_prod_missing_db_password_raises` now deletes the ambient `DB_PASSWORD` OS env var CI exports (pydantic reads OS env even with `_env_file=None`; sibling dev-mode test already did this) — verified locally with `DB_PASSWORD` exported; (b) `test_notify_token_created_dispatches_email` explicitly configures the mail provider under monkeypatch (CI has no `.env`; `provider_ready=False` → outbox row was `SUPPRESSED` not `PENDING`; same pattern as the neighboring SMTP-configured test) — 10/10 local; (c) FK audit: 0018's declared 14 FKs collapse to at most 9 distinct `(table, delete_rule)` pairs — the old `>= 10` threshold was unreachable **by construction** and CI's complaint of exactly 9 was correct; replaced with an **exact equality audit against the 14 declared FKs** (constraint name + table + referenced table + delete rule) — strictly stronger than the count. 78 hermetic tests re-passed; secret scan clean; `check-jsonschema` "ok". | hosted GitHub Actions (`ubuntu-latest`, MySQL 8.0.46 / Redis 7 service containers) + local |
+| 37 | **Hosted verification GREEN (runs #5 and #6) — full suite executed on a hosted runner** | Nov 6 (session 8) | Run #5 `42261999029` (commit `df8b712`): **both jobs SUCCESS** — `pytest-suite` and `mysql-migration-chain`. Run #6 `42262780689` (commit `b628077`, which additionally records the success-path tally/verdict as `::notice::` annotations readable auth-free). Exact tallies captured from the public check-run annotations API: **pytest: 857 passed, 0 failed, 0 errors, 0 skipped, 715 warnings in 52.99 s** (fresh Python 3.12, real async fixture path with greenlet — the capability this workstation lacks); **migration chain: ALL-OK — 0001→0018 up/down/re-up verified, all 14 declared FKs and 9/9 declared indexes match the migration, legacy rows preserved at every step, no MySQL error 1553**, run duration ≈ 52 s. URLs: `https://github.com/Arunkumar-codec/skip-line/actions/runs/42261999029` and `…/42262780689`. Commit integrity: 6 commits pushed non-force, working tree clean after each. **Status remains VERIFICATION INCOMPLETE** — the six UI acceptance flows (§1.4) and the AI live-provider call (§1.2) remain unverified; this result covers the automated pytest + migration-scope production-readiness checks only. | hosted GitHub Actions (`ubuntu-latest`) |
 
 Resources: disposable DBs `skipline_phase9_prodcheck` (dropped) and
 `skipline_phase9_cas` (auto-dropped); real DB `skipline` and pre-existing
