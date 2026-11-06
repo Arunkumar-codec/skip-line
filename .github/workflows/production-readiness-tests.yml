@@ -111,8 +111,8 @@ jobs:
         # check-runs API exposes the actual failure.
         run: |
           set -o pipefail
-          python -m pytest --tb=short --junitxml=pytest-results.xml 2>&1 | tee pytest-output.txt
-          code=${PIPESTATUS[0]}
+          code=0
+          python -m pytest --tb=short --junitxml=pytest-results.xml 2>&1 | tee pytest-output.txt || code=$?
           if [ "$code" -ne 0 ]; then
             tail -n 30 pytest-output.txt | while IFS= read -r line; do
               enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
@@ -193,8 +193,8 @@ jobs:
         # as ::error:: annotations so the public check-runs API exposes
         # the actual failure.
         run: |
-          python scripts/ci_migration_chain_check.py 2>&1 | tee ci-migration-output.txt
-          code=${PIPESTATUS[0]}
+          code=0
+          python scripts/ci_migration_chain_check.py 2>&1 | tee ci-migration-output.txt || code=$?
           if [ "$code" -ne 0 ]; then
             tail -n 40 ci-migration-output.txt | while IFS= read -r line; do
               enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
