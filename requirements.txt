@@ -18,6 +18,11 @@ pymysql==1.1.1                   # sync driver used by Alembic CLI
 redis==5.0.4                     # WebSocket pub/sub fan-out (optional at runtime;
                                  # only required when REDIS_URL is configured)
 
+# razorpay 1.4.2 imports pkg_resources (razorpay/client.py:4) but does NOT
+# declare it; Python-3.12 venvs no longer bundle setuptools, so the CI runner
+# fails with ModuleNotFoundError: pkg_resources without this explicit pin.
+setuptools==75.8.0               # provides pkg_resources for razorpay 1.4.2
+
 # ── Authentication & security ──────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0  # JWT (RS256 / HS256)
 passlib[bcrypt]==1.7.4            # password hashing
