@@ -207,7 +207,12 @@ def test_dev_missing_db_password_warns_only(monkeypatch):
         _settings(app_env=DEV)
 
 
-def test_prod_missing_db_password_raises():
+def test_prod_missing_db_password_raises(monkeypatch):
+    # CI exports DB_PASSWORD as a real OS env var (workflow `env:` block);
+    # pydantic-settings reads OS environment variables regardless of
+    # _env_file=None, so an ambient value would mask the "missing" branch.
+    # Isolate the field exactly like test_dev_missing_db_password_warns_only.
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
     with pytest.raises(ValueError, match="DB_PASSWORD"):
         _settings(
             app_env=PROD,

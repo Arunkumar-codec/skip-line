@@ -111,7 +111,15 @@ class TestSendEmail:
 
 
 class TestNotificationDispatch:
-    async def test_notify_token_created_dispatches_email(self, db_session):
+    async def test_notify_token_created_dispatches_email(self, db_session,
+                                                         monkeypatch):
+        # The outbox enqueuer writes a SUPPRESSED row when the mail provider
+        # is unconfigured; it must be PENDING here so the dispatch half of
+        # the flow can run. CI has no .env file, so the provider MUST be
+        # configured explicitly in the test (same pattern as
+        # test_send_email_calls_smtp_when_configured above).
+        from app.config import settings
+        monkeypatch.setattr(settings, "mail_username", "ci-mailer@example.test")
         from sqlalchemy import select
 
         from models.notification_outbox import NotificationOutbox, OutboxStatus

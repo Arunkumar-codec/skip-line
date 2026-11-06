@@ -88,6 +88,42 @@ DECLARED_INDEXES = {
     ("ai_conversations", "ix_ai_conversations_user_id"),
 }
 
+# The EXACT foreign keys migrations/versions/0018_workflows_and_ai.py
+# declares on the phase-9 tables, as (TABLE_NAME, CONSTRAINT_NAME,
+# REFERENCED_TABLE_NAME, DELETE_RULE). 0018 declares 14 FKs whose
+# (table, delete_rule) pairs collapse to 9 distinct combinations — so the
+# former fuzzy '>= 10 distinct-pairs' assertion was unachievable by
+# construction and could not distinguish a missing FK from a collapsed
+# duplicate. The audit is now an exact equality against this declared set:
+# every missing, dropped or unexpected FK is named, which is strictly
+# stronger than the old count-based check.
+DECLARED_FKS = {
+    ("service_workflows", "fk_service_workflow_org", "organizations",
+     "CASCADE"),
+    ("service_workflows", "fk_service_workflow_service", "services",
+     "CASCADE"),
+    ("workflow_stages", "fk_workflow_stage_workflow", "service_workflows",
+     "CASCADE"),
+    ("workflow_stages", "fk_workflow_stage_org", "organizations", "CASCADE"),
+    ("workflow_stages", "fk_workflow_stage_counter", "counters", "SET NULL"),
+    ("token_workflow_states", "fk_token_workflow_state_token", "tokens",
+     "CASCADE"),
+    ("token_workflow_states", "fk_token_workflow_state_org", "organizations",
+     "CASCADE"),
+    ("token_workflow_states", "fk_token_workflow_state_workflow",
+     "service_workflows", "RESTRICT"),
+    ("token_workflow_states", "fk_token_workflow_state_stage",
+     "workflow_stages", "SET NULL"),
+    ("token_stage_logs", "fk_token_stage_log_token", "tokens", "CASCADE"),
+    ("token_stage_logs", "fk_token_stage_log_org", "organizations",
+     "CASCADE"),
+    ("token_stage_logs", "fk_token_stage_log_state",
+     "token_workflow_states", "CASCADE"),
+    ("token_stage_logs", "fk_token_stage_log_employee", "employees",
+     "SET NULL"),
+    ("ai_conversations", "fk_ai_conversation_user", "users", "CASCADE"),
+}
+
 # Synthetic (non-secret) seed values — schema-aware NOT NULL fill-in below.
 LEGACY_ROWS = [
     ("organizations", {
@@ -350,8 +386,8 @@ def main(env: dict = None) -> int:
             ver = c.execute(
                 text("SELECT version_num FROM alembic_version")).scalar()
             fks = c.execute(text(
-                "SELECT rc.TABLE_NAME, k.COLUMN_NAME, "
-                "rc.REFERENCED_TABLE_NAME, rc.DELETE_RULE, rc.UPDATE_RULE "
+                "SELECT rc.TABLE_NAME, rc.CONSTRAINT_NAME, "
+                "rc.REFERENCED_TABLE_NAME, rc.DELETE_RULE "
                 "FROM information_schema.REFERENTIAL_CONSTRAINTS rc "
                 "JOIN information_schema.KEY_COLUMN_USAGE k "
                 "  ON rc.CONSTRAINT_NAME = k.CONSTRAINT_NAME "
@@ -369,14 +405,15 @@ def main(env: dict = None) -> int:
                 "'token_workflow_states','token_stage_logs','ai_conversations')"
             ), {"db": db_name}).fetchall()
             return (ver, hit, (legacy, org, svc),
-                    {(r[0], r[3]) for r in fks},
+                    {(r[0], r[1], r[2], r[3]) for r in fks},
                     {(r[0], r[1]) for r in idx})
 
     def check(step):
         ver, hit, legacy, fks, idx = audit()
         print(f"    [{step}] alembic_version={ver}; phase-9 tables={hit}; "
               f"legacy rows (tokens/org/service)={legacy}; "
-              f"known FK actions={len(fks)}; named indexes on 0018 tables="
+              f"FK constraints on 0018 tables={len(fks)}/{len(DECLARED_FKS)}; "
+              f"named indexes on 0018 tables="
               f"{len(idx & DECLARED_INDEXES)}/{len(DECLARED_INDEXES)}")
         return ver, hit, legacy, fks, idx
 
@@ -402,10 +439,14 @@ def main(env: dict = None) -> int:
             missing_idx = DECLARED_INDEXES - idx
             assert not missing_idx, \
                 f"declared indexes missing after upgrade: {missing_idx}"
-            assert len(fks) >= 10, \
-                f"FK audit unexpectedly small: {len(fks)}"
+            missing_fks = DECLARED_FKS - fks
+            unexpected_fks = fks - DECLARED_FKS
+            assert not missing_fks, \
+                f"declared FKs missing after upgrade: {sorted(missing_fks)}"
+            assert not unexpected_fks, \
+                f"unexpected FKs on phase-9 tables: {sorted(unexpected_fks)}"
             print(f"[4] upgrade head (0018) OK in {time.time() - t0:.1f}s; "
-                  f"FK actions={sorted(fks)}")
+                  f"FK set={sorted(fks)}")
 
             t0 = time.time()
             command.downgrade(cfg, "0017")
@@ -446,7 +487,7 @@ def main(env: dict = None) -> int:
                  "database created by this run was dropped).")
 
     print("ALL-OK: real alembic chain 0001→0018 up/down/re-up verified;"
-          " FK and 9/9 declared-index audits match the migration;"
+          " all 14 declared FKs and 9/9 declared indexes match the migration;"
           " legacy rows preserved at every step; no error 1553.")
     return 0
 

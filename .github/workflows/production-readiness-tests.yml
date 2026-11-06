@@ -1,6 +1,6 @@
 # SkipLine — Production-Readiness CI (Phase 9 verification, NOT Phase 10).
 #
-# Executes the complete automated test suite (797 collected tests) plus the
+# Executes the complete automated test suite (857 collected tests) plus the
 # real MySQL migration chain. Design rules (see docs/CI_VERIFICATION_GUIDE.md):
 #   - NO production credentials, no real database, no payments, no paid LLM
 #     calls: every value here is synthetic and test-only. This workflow uses
@@ -41,7 +41,7 @@ jobs:
 
   # ── Job 1: complete pytest suite (disposable MySQL + Redis services) ────────
   pytest-suite:
-    name: pytest full suite (797 tests)
+    name: pytest full suite
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
