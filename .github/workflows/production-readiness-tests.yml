@@ -104,11 +104,22 @@ jobs:
         # The in-memory SQLite session fixture (tests/conftest.py) prepares the
         # DB; no test connects to the MySQL service engine directly.
         # `set -o pipefail` propagates pytest's exit code THROUGH the `tee`
-        # pipeline — without it the trailing echo/tee would zero out a failed
-        # run and the job could never go red.
+        # pipeline — without it the trailing tee would zero out a failed
+        # run and the job could never go red. stderr is merged (2>&1) so
+        # pytest's failure output is captured. On failure the tail of the
+        # output is emitted as ::error:: annotations so the public
+        # check-runs API exposes the actual failure.
         run: |
           set -o pipefail
-          python -m pytest --tb=short --junitxml=pytest-results.xml | tee pytest-output.txt
+          python -m pytest --tb=short --junitxml=pytest-results.xml 2>&1 | tee pytest-output.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            tail -n 30 pytest-output.txt | while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
+              echo "::error::$enc"
+            done
+            exit "$code"
+          fi
 
       - name: Suite counts summary
         if: always()
@@ -178,4 +189,24 @@ jobs:
         # skipline_ci_migrate (loopback host, valid port, synthetic
         # credentials), refuses to run when that database already exists,
         # and only ever drops a database created by its own current run.
-        run: python scripts/ci_migration_chain_check.py
+        # Full output (stdout+stderr) is captured and, on failure, emitted
+        # as ::error:: annotations so the public check-runs API exposes
+        # the actual failure.
+        run: |
+          python scripts/ci_migration_chain_check.py 2>&1 | tee ci-migration-output.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            tail -n 40 ci-migration-output.txt | while IFS= read -r line; do
+              enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
+              echo "::error::$enc"
+            done
+            exit "$code"
+          fi
+
+      - name: Upload migration output artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-output
+          path: ci-migration-output.txt
+          if-no-files-found: warn
