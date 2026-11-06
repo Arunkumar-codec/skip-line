@@ -124,6 +124,13 @@ jobs:
             done
             exit "$code"
           fi
+          # SUCCESS PATH: emit the final tally as ::notice:: annotations so
+          # the public check-runs API records the exact passed/failed/
+          # skipped counts even without repository-log access.
+          grep -E "[0-9]+ (passed|failed|error|skipped|xfailed|xpassed)" pytest-output.txt | tail -n 5 | while IFS= read -r line; do
+            enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g' -e 's/^=+//')
+            echo "::notice::$enc"
+          done
 
       - name: Suite counts summary
         if: always()
@@ -210,6 +217,12 @@ jobs:
             done
             exit "$code"
           fi
+          # SUCCESS PATH: record the ALL-OK audit verdict on the public
+          # check-runs API (logs are inaccessible without admin auth).
+          grep -E "ALL-OK" ci-migration-output.txt | tail -n 1 | while IFS= read -r line; do
+            enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
+            echo "::notice::$enc"
+          done
 
       - name: Upload migration output artifact
         if: always()
