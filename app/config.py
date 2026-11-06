@@ -15,9 +15,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Known-insecure values that production must reject outright (case-insensitive).
 # The first two are the removed hardcoded defaults; the rest are common
-# placeholder secrets.
+# placeholder secrets. The two long change-me placeholders are included
+# explicitly (prodcheck finding, Nov 2026): they were observed verbatim in a
+# local development .env and previously PASSED the >=32 length check in
+# production. Unfilled `<…>` marker values from .env.example itself are
+# rejected by _is_unfilled_marker() below (second prodcheck finding, Nov 6).
 _INSECURE_SECRET_VALUES = frozenset(
-    {"changeme", "changeme-jwt", "secret", "password"}
+    {
+        "changeme",
+        "changeme-jwt",
+        "secret",
+        "password",
+        "change-me",
+        "change-me-to-a-64-char-random-string",
+        "change-me-to-another-64-char-random-string",
+    }
 )
 _INSECURE_ADMIN_PASSWORDS = frozenset(
     {"admin", "password", "changeme", "admin@1234!"}
@@ -25,6 +37,31 @@ _INSECURE_ADMIN_PASSWORDS = frozenset(
 # Strong required lengths for production.
 _MIN_GLOBAL_SECRET_LENGTH = 32
 _MIN_ADMIN_PASSWORD_LENGTH = 12
+
+
+def _is_unfilled_marker(value: str) -> bool:
+    """True when the ENTIRE value is one unfilled `.env.example` placeholder
+    of the `<set-a-…>` template form (starts with `<`, ends with `>`).
+
+    Narrow by design (prodcheck review, Nov 6): stray `<`/`>` characters in
+    the middle of a legitimate value (a real password or secret can contain
+    them) are NOT rejected, and malformed/truncated fragments are handled
+    safely:
+
+    - an incomplete marker fragment (e.g. `<set-a-long`, `foo<bar`) is not
+      treated as a marker — but such a value still fails the production
+      minimum-length requirement, and known placeholder strings remain
+      covered exactly by `_INSECURE_SECRET_VALUES`;
+    - `<` alone, `>` alone and whitespace-padded markers are rejected only in
+      their complete `<…>` template form.
+    - Deliberately NOT applied to DB_PASSWORD: a legitimate database password
+      may legitimately contain `<`/`>`, and a wrong DB password fails loudly
+      at first connection anyway.
+    """
+    if not value:
+        return False
+    v = value.strip()
+    return len(v) >= 2 and v.startswith("<") and v.endswith(">")
 
 
 class Settings(BaseSettings):
@@ -218,7 +255,8 @@ class Settings(BaseSettings):
                 stacklevel=3,
             )
             setattr(self, name, secrets.token_urlsafe(48))
-        elif value.strip().lower() in _INSECURE_SECRET_VALUES:
+        elif value.strip().lower() in _INSECURE_SECRET_VALUES \
+                or _is_unfilled_marker(value):
             insecure_message = (
                 f"{env_name} uses a known insecure placeholder value. "
                 f"Provide a strong random secret of at least "
@@ -262,7 +300,8 @@ class Settings(BaseSettings):
             )
         else:
             lowered = self.admin_password.strip().lower()
-            if lowered in _INSECURE_ADMIN_PASSWORDS:
+            if lowered in _INSECURE_ADMIN_PASSWORDS \
+                    or _is_unfilled_marker(self.admin_password):
                 insecure_message = (
                     "ADMIN_PASSWORD uses a known insecure placeholder value; "
                     "provide a strong password instead (see .env.example)."

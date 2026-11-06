@@ -221,44 +221,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Descending dependency order; guards keep the downgrade safe when the
-    # upgrade was partially applied by hand (0017 style).
-    if _has_index(op.get_bind(), "ai_conversations", "ix_ai_conversations_user_id"):
-        op.drop_index("ix_ai_conversations_user_id", table_name="ai_conversations")
-    if _table_exists("ai_conversations"):
-        op.drop_table("ai_conversations")
-
-    for ix, tbl in (
-        ("ix_token_stage_logs_action", "token_stage_logs"),
-        ("ix_token_stage_logs_organization_id", "token_stage_logs"),
-        ("ix_token_stage_logs_token_id", "token_stage_logs"),
-    ):
-        if _has_index(op.get_bind(), tbl, ix):
-            op.drop_index(ix, table_name=tbl)
-    if _table_exists("token_stage_logs"):
-        op.drop_table("token_stage_logs")
-
-    for ix, tbl in (
-        ("ix_token_workflow_states_organization_id", "token_workflow_states"),
-        ("ix_token_workflow_states_token_id", "token_workflow_states"),
-    ):
-        if _has_index(op.get_bind(), tbl, ix):
-            op.drop_index(ix, table_name=tbl)
-    if _table_exists("token_workflow_states"):
-        op.drop_table("token_workflow_states")
-
-    for ix, tbl in (
-        ("ix_workflow_stages_organization_id", "workflow_stages"),
-        ("ix_workflow_stages_workflow_id", "workflow_stages"),
-    ):
-        if _has_index(op.get_bind(), tbl, ix):
-            op.drop_index(ix, table_name=tbl)
-    if _table_exists("workflow_stages"):
-        op.drop_table("workflow_stages")
-
-    if _has_index(op.get_bind(), "service_workflows",
-                  "ix_service_workflows_organization_id"):
-        op.drop_index("ix_service_workflows_organization_id",
-                      table_name="service_workflows")
-    if _table_exists("service_workflows"):
-        op.drop_table("service_workflows")
+    # MySQL-8-safe ordering (post-prodcheck finding, Nov 2026): MySQL refuses
+    # to drop an index that backs a still-declared FOREIGN KEY (error 1553),
+    # so the original index-before-table order — harmless on SQLite, where
+    # this was developed and roundtrip-tested — is INVALID on MySQL. The
+    # correct order everywhere is: drop the TABLE first, which removes its
+    # indexes and FK-enforcing indexes together. No standalone index drops
+    # remain; each table's indexes are removed atomically with the table
+    # itself. (_has_index is now unused; its removal belongs to the eventual
+    # commit review.)
+    order = [
+        "ai_conversations",
+        "token_stage_logs",
+        "token_workflow_states",
+        "workflow_stages",
+        "service_workflows",
+    ]
+    for tbl in order:
+        if _table_exists(tbl):
+            op.drop_table(tbl)
