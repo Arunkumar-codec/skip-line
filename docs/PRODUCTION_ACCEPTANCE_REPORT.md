@@ -509,3 +509,101 @@ the blocking path). §10 blocker #3 rehearsal is now a real-chain,
 real-scripts PASS. Verdict B items remaining: #2 (full compose bring-up),
 #4 (live LLM call — needs operator credentials), #5 (SEC-009 signature),
 #6 (hosted CI rerun on the pushed changeset).
+
+
+---
+
+## 15. Final Production Acceptance Gate (Nov 12, 2026 — post WP1/WP2/WP3)
+
+Assessed on baseline HEAD `4af7f96020504e57e71d2c5864b82c4be7379dd0`
+(WP1 `c2fa863`, WP2 `9872cd5`, WP3 `4af7f96` — all committed and pushed;
+HEAD == `origin/main`; working tree clean at gate start). This section is
+append-only; nothing above §14 was altered.
+
+### 15.1 Technical & Security Readiness — COMPLETE
+
+| Gate | Status | Evidence |
+|---|---|---|
+| Acceptance flows (UI, end-to-end) | **7/7 PASS** (220.0 s) under the WP3-rotated `JWT_SECRET_KEY`/`SECRET_KEY` — flows 1–6 incl. kiosk, manual→AI, AI→manual | `%TEMP%\opencode\final_acceptance_junit.xml` (Nov 12) |
+| Full regression (non-acceptance) | **915 tests / 0 failures / 0 errors / 4 real-Redis skips, exit 0** (WP3, Row 49) | `%TEMP%\opencode\wp3_regression_junit.xml` |
+| Least-privilege DB runtime | `skipline_app`@`localhost`, zero global/banned privileges; full alembic 0001→0018 under the app identity; root rotated, old credential dead | Row 48; `wps2_evidence.json` / `wps2_privcheck_evidence.json` |
+| Application secrets | `SECRET_KEY`/`JWT_SECRET_KEY` (64-ch, distinct) + `ADMIN_PASSWORD` (32-ch) rotated; live seeded admin hash rotated too (old dev password dead); production-mode validation clean | Row 49; `wp3_secret_rotation.json` |
+| Optional-provider degradation | Razorpay unconfigured → clean 503; SMTP/outbox → honest SUPPRESSED; AI → `AiProviderUnavailable` fallback; Twilio = documented placeholder | Row 49; `test_optional_provider_gates.py` 27/27 |
+| Residual credential leaks | 0 credential-shaped values in 360 artifacts; old root + dev admin passwords unrecoverable | Row 48; `wps2_leak_redaction.json` |
+
+### 15.2 Infrastructure gates
+
+- **Docker Compose full stack:** `BLOCKED (Docker Desktop engine offline)`
+  — engine named pipe absent (`docker version` fails at the server step).
+  No Docker state was modified. Compose hardening (required-variable
+  guards, no hardcoded passwords, least-privilege identity, no `.env` in
+  image) is already committed and unit-locked; the first containerized
+  bring-up remains the owner's gate (note the first-init-only MySQL volume
+  caveat from the root-password origin report).
+- **Hosted CI on `4af7f96`:** not verifiable from this workstation — the
+  GitHub CLI is not installed and the repository is private (unauthenticated
+  API returns 404). **Owner instructions:** open the repo's **Actions** tab
+  on github.com for the `4af7f96` commit, or `gh auth login` then
+  `gh run list --commit 4af7f96`. Prior hosted runs of this suite are green
+  (Row 43/44 evidence).
+
+### 15.3 Production configuration & provider posture (values masked)
+
+`.env` identity/secrets — all verified set & strong (never printed):
+`DB_USER=skipline_app`; `DB_PASSWORD` 40-ch; `MYSQL_ROOT_PASSWORD` 40-ch;
+`SECRET_KEY` 64-ch; `JWT_SECRET_KEY` 64-ch (distinct); `ADMIN_PASSWORD`
+32-ch. Production-mode validation: clean (zero warnings/errors).
+
+| Integration | Live state | Degradation behavior |
+|---|---|---|
+| **AI provider** | INTENTIONALLY DISABLED (no `AI_*` keys in `.env`) | `AiProviderUnavailable` → assistant falls back cleanly; core booking unaffected (tested) |
+| **Razorpay** | Keys present in provider-plausible format; per the Nov 8 origin audit these are **placeholders** (no provider ever contacted by the app). NOT verified live (no-external-calls rule). | WP3 503 guard engages only when keys are EMPTY — with placeholders an initiate attempt would reach the SDK. **Owner decision:** fill live keys or blank the placeholders (blank ⇒ clean 503). |
+| **SMTP / outbox** | `MAIL_*` present in plausible format; per origin audit = placeholder. | Unconfigured channels → `SUPPRESSED ("provider unconfigured")`, never retried; failing-configured capped at `max_attempts` with 30/60/120 s backoff. |
+| **Twilio SMS** | `TWILIO_*` present in plausible format; per origin audit = placeholder; implementation is a **documented placeholder — not wired end-to-end** | `send_sms` always returns honestly False; absence blocks nothing (SUPPRESSED rows). |
+
+No provider placeholder causes startup warnings or errors (verified in
+production-mode validation).
+
+### 15.4 SEC-009 legal handover & DB hygiene
+
+- `docs/SEC009_LEGAL_HANDOVER.md` verified accurate and complete:
+  technical controls (audit logging, KYC/verification workflow,
+  data-minimisation primitives, payment integrity, secret-scanning) are all
+  referenced with evidence locations.
+- **Human-only open items:** written answers to §3 questions 1–6 (identity
+  retention, guest consent, receipt/tax statements, AI conversation
+  retention, listing pre-approval, data residency) + the signed §5 approval
+  block (reviewer name, role, date, verdict).
+- **Leftover database:** `skipline_acceptance_20261109104208_54003e`
+  (Nov 9, 65 tables) remains on host MySQL — **drop-or-retain decision
+  reserved to the owner; not touched.** Today's runs tore down owned-only
+  (verified post-suite: no 2026-11-12 leftovers).
+
+### 15.5 Verdict & the human sign-off checklist for Verdict A
+
+**Technical & Security Readiness: COMPLETE** (WP1 + WP2 + WP3 verified;
+7/7 acceptance + 915-test regression under the current secrets).
+
+**Verdict A (Production Ready) is blocked ONLY by these human sign-offs:**
+
+1. [ ] **SEC-009 legal signature** — `docs/SEC009_LEGAL_HANDOVER.md` §5
+   approval block completed by the authorized reviewer (written answers to
+   §3 required).
+2. [ ] **Docker Desktop bring-up** — start Docker Desktop, then:
+   `docker compose config --quiet` → `docker compose up -d --build` →
+   verify `GET http://localhost:8000/health` = 200 and `/app/.env` absent
+   in the app container → `docker compose down` (keep volumes).
+3. [ ] **Hosted CI rerun** — confirm GitHub Actions green on `4af7f96`
+   (Actions tab or `gh run list --commit 4af7f96`).
+4. [ ] **Optional-provider key decision** — for Razorpay/SMTP/Twilio:
+   fill LIVE credentials (then re-run the payment/SMS/email evidence) OR
+   blank the placeholder values so the clean 503/SUPPRESSED paths engage.
+5. [ ] **Leftover DB disposal** — drop or retain
+   `skipline_acceptance_20261109104208_54003e` (owner's call).
+6. [ ] **Final authorization to start Phase 10** — explicit owner approval
+   (Phase 10 remains ON HOLD until then; no Phase 10 code was written in
+   this session).
+
+When items 1–5 are checked, this gate can be marked **Verdict A** and item
+6 unlocks Phase 10. All doc updates in this section are uncommitted for
+final owner review.
