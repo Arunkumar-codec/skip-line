@@ -2,8 +2,13 @@ version: "3.9"
 
 services:
   # ── MySQL database ──────────────────────────────────────────────────────────
+  # 8.0.46 is the EXACT engine version the migration chain, FK audit (14/14)
+  # and index audit (9/9) were verified against (hosted CI runs
+  # 42261999029/42263779003 and the local sync/async rehearsals). The previous
+  # 8.3 tag is an Innovation line already past its support window — 8.0.46
+  # aligns deployment with the verified evidence.
   db:
-    image: mysql:8.3
+    image: mysql:8.0.46
     container_name: skipline_db
     restart: unless-stopped
     environment:
@@ -48,6 +53,13 @@ services:
       # Phase 8 (SEC-004): CSRF double-submit enforcement is automatic in
       # production (app_env="production"); force it elsewhere if needed.
       CSRF_ENFORCE: ${CSRF_ENFORCE:-false}
+      # Debug pages / SQL echo are a production configuration error
+      # (config validator); default off for compose deployments.
+      APP_DEBUG: ${APP_DEBUG:-false}
+      # Structured file logging: writes request/audit logs into the app_logs
+      # volume (previously the volume existed but no sink wrote to it).
+      LOG_DIR: /app/logs
+      LOG_FILE_LEVEL: ${LOG_FILE_LEVEL:-INFO}
     ports:
       - "8000:8000"
     volumes:
@@ -106,10 +118,11 @@ services:
       - skipline_net
 
   # ── Backup (one-shot; `docker compose run --rm backup` or make backup) ─────
-  # Runs scripts/backup.sh inside a mysql:8.3 container (mysqldump included).
-  # Backups land in ./backups (gitignored). Not started by `compose up`.
+  # Runs scripts/backup.sh inside the SAME mysql:8.0.46 engine as the db
+  # service (mysqldump included). Backups land in ./backups (gitignored).
+  # Not started by `compose up`.
   backup:
-    image: mysql:8.3
+    image: mysql:8.0.46
     profiles: ["backup"]
     container_name: skipline_backup
     volumes:

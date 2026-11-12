@@ -1459,9 +1459,7 @@ async def list_counter_shifts_api(
         org, redir = await _get_org_or_redirect(request, db)
         if redir:
             return redir
-        return templates.TemplateResponse(
-            "org/shifts.html",
-            {"request": request, "current_org": org, "active_page": "shifts"},
+        return templates.TemplateResponse(request, "org/shifts.html", {"request": request, "current_org": org, "active_page": "shifts"},
         )
 
     shifts = await shift_service.list_org_shifts(
@@ -1605,9 +1603,7 @@ async def list_kiosks_api(
         from app.services import branch_service
         templates = Jinja2Templates(directory="templates")
         branches = await branch_service.list_branches(db, org.id)
-        return templates.TemplateResponse(
-            "org/kiosks.html",
-            {"request": request, "current_org": org, "active_page": "kiosks", "branches": branches},
+        return templates.TemplateResponse(request, "org/kiosks.html", {"request": request, "current_org": org, "active_page": "kiosks", "branches": branches},
         )
 
     kiosks = await kiosk_service.list_kiosks(db, org.id)

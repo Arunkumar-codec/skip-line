@@ -109,7 +109,19 @@ async def start_ai_session(
                 {"role": "system", "content": ai_assistant_service.SYSTEM_PROMPT},
                 {"role": "user", "content": "Introduce yourself briefly."},
             ])
-            greeting = str(raw)[:1500]
+            # The assistant speaks the strict JSON action protocol; a
+            # customer-facing greeting must be its text, never the raw
+            # protocol object. (WP1 acceptance found the JSON literal was
+            # displayed verbatim in the chat log.)
+            import json
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else None
+            except (ValueError, json.JSONDecodeError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("action") == "reply":
+                greeting = str(parsed.get("text") or raw)[:1500]
+            else:
+                greeting = str(raw)[:1500]
         except ai_provider.AiProviderUnavailable:
             greeting = ai_assistant_service.unavailable_message()
     elif body.mode == "ai":

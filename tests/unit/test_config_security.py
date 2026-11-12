@@ -40,6 +40,9 @@ def build_settings(**kwargs) -> Settings:
     """Build a Settings instance isolated from the developer's .env file and
     any process environment, so tests are deterministic."""
     kwargs["_env_file"] = None  # never read the developer's .env
+    kwargs.setdefault("app_debug", False)  # production tests configure the
+    # deployment honestly (compose sets APP_DEBUG=false by default); debug
+    # policy is asserted explicitly in test_prod_rejects_debug_true.
     return Settings(**kwargs)
 
 

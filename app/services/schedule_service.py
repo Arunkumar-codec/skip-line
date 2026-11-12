@@ -979,7 +979,15 @@ async def get_public_slots_for_date(
             tenant_counter is None
             or tenant_counter.organization_id != organization.id
             or tenant_counter.status != CounterStatus.ACTIVE
-            or tenant_counter.queue_mode != QueueMode.SLOTS
+            # NOTE(WP1): a non-SLOTS queue_mode is NOT an error. The
+            # docstring contract (L955-960) and the check_availability tool
+            # both promise `is_legacy_day_queue` for legacy day-queue
+            # tenants; the slots query below already filters on
+            # queue_mode == SLOTS, so a day-queue counter simply yields an
+            # empty slot list instead of a spurious 404 (evidence:
+            # WP1 acceptance run 8, AI tool check_availability failing with
+            # "404: Counter not found" against the tenant's own ACTIVE
+            # day-queue counter).
         ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Counter not found"

@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── LED-001..004: Ledger Journal & Totals ────────────────────────────────────
@@ -31,8 +31,7 @@ class LedgerEntryRead(BaseModel):
     entry_metadata: Optional[dict] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LedgerTotalsRead(BaseModel):
@@ -73,8 +72,7 @@ class RefundRead(BaseModel):
     processed_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── CASH-001..003: Cash Sessions & Breakdown ──────────────────────────────────
@@ -102,8 +100,7 @@ class CashSessionRead(BaseModel):
     created_at: datetime
     closed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── FIN-001..004: Payouts, Bank Accounts & Risk Flags ─────────────────────────
@@ -125,8 +122,7 @@ class PayoutRead(BaseModel):
     paid_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrgBankAccountUpdate(BaseModel):
@@ -149,8 +145,7 @@ class OrgBankAccountRead(BaseModel):
     verified_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinancialRiskFlagRead(BaseModel):
@@ -166,8 +161,7 @@ class FinancialRiskFlagRead(BaseModel):
     resolved_at: Optional[datetime] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RiskFlagResolveRequest(BaseModel):
@@ -205,7 +199,6 @@ class PaidBookingHoldRead(BaseModel):
     payment_hold_by: Optional[int] = None
     payment_hold_previous_status: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 

@@ -223,7 +223,7 @@ async def display_view_page(
         raise HTTPException(status_code=404, detail="Organization not found")
 
     display_data = await token_service.get_display_data(db, org_id)
-    return templates.TemplateResponse("public/display.html", {
+    return templates.TemplateResponse(request, "public/display.html", {
         "request": request,
         "org_id": org_id,
         "org_name": org.name,
@@ -263,7 +263,7 @@ async def track_page(ref: str, request: Request, db: AsyncSession = Depends(get_
     except ValueError:
         return HTMLResponse("<h3>Invalid or expired token link</h3>", status_code=404)
 
-    return templates.TemplateResponse("public/track.html", {
+    return templates.TemplateResponse(request, "public/track.html", {
         "request": request,
         "ws_ref": ref,
         "token_number": tracking["token_number"],

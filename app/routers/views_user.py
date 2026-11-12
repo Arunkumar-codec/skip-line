@@ -49,7 +49,7 @@ async def _get_user_or_redirect(request: Request, db: AsyncSession):
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
-    return templates.TemplateResponse("shared/login.html", {
+    return templates.TemplateResponse(request, "shared/login.html", {
         "request": request,
         "portal_name": "User",
         "login_action": "/user/login/submit",
@@ -73,7 +73,7 @@ async def login_submit(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request, error: str = None):
-    return templates.TemplateResponse("user/register.html", {
+    return templates.TemplateResponse(request, "user/register.html", {
         "request": request,
         "error": error,
     })
@@ -99,7 +99,7 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         return redir
 
     active = await user_service.get_user_active_tokens(db, user.id)
-    return templates.TemplateResponse("user/dashboard.html", {
+    return templates.TemplateResponse(request, "user/dashboard.html", {
         "request": request,
         "current_user": user,
         "active_page": "dashboard",
@@ -137,7 +137,7 @@ async def assistant(
         "slot_id": slot_id, "slot_label": slot_label,
     }.items() if v not in (None, "")}
 
-    return templates.TemplateResponse("user/assistant.html", {
+    return templates.TemplateResponse(request, "user/assistant.html", {
         "request": request,
         "current_user": user,
         "active_page": "assistant",
@@ -168,7 +168,7 @@ async def organizations(
     orgs, total = await user_service.search_organizations(
         db, query=q, org_type=org_type, city=city, state=state, page=page
     )
-    return templates.TemplateResponse("user/organizations.html", {
+    return templates.TemplateResponse(request, "user/organizations.html", {
         "request": request,
         "current_user": user,
         "active_page": "search",
@@ -217,7 +217,7 @@ async def token_history(
         return redir
 
     tokens, total = await user_service.get_user_token_history(db, user.id, page)
-    return templates.TemplateResponse("user/token_history.html", {
+    return templates.TemplateResponse(request, "user/token_history.html", {
         "request": request,
         "current_user": user,
         "active_page": "token_history",
@@ -240,7 +240,7 @@ async def profile_page(
     user, redir = await _get_user_or_redirect(request, db)
     if redir:
         return redir
-    return templates.TemplateResponse("user/profile.html", {
+    return templates.TemplateResponse(request, "user/profile.html", {
         "request": request,
         "current_user": user,
         "active_page": "profile",
@@ -268,7 +268,7 @@ async def notifications_page(request: Request, db: AsyncSession = Depends(get_db
     user, redir = await _get_user_or_redirect(request, db)
     if redir:
         return redir
-    return templates.TemplateResponse("user/notifications.html", {
+    return templates.TemplateResponse(request, "user/notifications.html", {
         "request": request,
         "current_user": user,
         "active_page": "notifications",
@@ -312,7 +312,7 @@ async def track_page(token_id: int, request: Request, db: AsyncSession = Depends
 
     from app.utils import signed_qr
 
-    return templates.TemplateResponse("public/track.html", {
+    return templates.TemplateResponse(request, "public/track.html", {
         "request": request,
         "token_id": token_id,
         "ws_ref": signed_qr.create_token_ref(
@@ -343,7 +343,7 @@ async def kiosk_page(org_id: int, request: Request, db: AsyncSession = Depends(g
         ).order_by(Counter.counter_number)
     )).scalars().all()
 
-    return templates.TemplateResponse("public/kiosk.html", {
+    return templates.TemplateResponse(request, "public/kiosk.html", {
         "request": request,
         "org_id": org_id,
         "org_name": org.name,
@@ -362,7 +362,7 @@ async def active_tokens_page(request: Request, db: AsyncSession = Depends(get_db
         return redir
 
     active = await user_service.get_user_active_tokens(db, user.id)
-    return templates.TemplateResponse("user/dashboard.html", {
+    return templates.TemplateResponse(request, "user/dashboard.html", {
         "request": request,
         "current_user": user,
         "active_page": "active_tokens",
@@ -380,7 +380,7 @@ async def user_identity_page(request: Request, db: AsyncSession = Depends(get_db
 
     from app.services import identity_service
     records = await identity_service.list_user_identities(db, user.id)
-    return templates.TemplateResponse("user/identity.html", {
+    return templates.TemplateResponse(request, "user/identity.html", {
         "request": request,
         "current_user": user,
         "active_page": "identity",
@@ -415,7 +415,7 @@ async def user_feedback_page(request: Request, db: AsyncSession = Depends(get_db
         )
     ).scalars().all()
     rateable = [t for t in tokens if t.id not in rated_ids]
-    return templates.TemplateResponse("user/feedback.html", {
+    return templates.TemplateResponse(request, "user/feedback.html", {
         "request": request,
         "current_user": user,
         "active_page": "feedback",
@@ -461,7 +461,7 @@ async def user_cases_page(request: Request, db: AsyncSession = Depends(get_db)):
             )
         ).scalars().all()
     )
-    return templates.TemplateResponse("user/cases.html", {
+    return templates.TemplateResponse(request, "user/cases.html", {
         "request": request,
         "current_user": user,
         "active_page": "support",

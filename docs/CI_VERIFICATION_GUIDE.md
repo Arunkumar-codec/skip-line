@@ -215,29 +215,37 @@ This workstation did still execute the **hermetic gate tests**
 (`pytest tests/test_ci_migration_gate.py -v --noconftest`, 53/53 passed) and
 the script's refusal/teardown paths, which do not import greenlet.
 
-## 9. UI acceptance (six blocked flows) — required tooling
+## 9. UI acceptance (six blocked flows) — implemented harness + required tooling
 
-No browser automation exists in the repository today (no Playwright,
-Selenium, Cypress, or traces of headless-browser fixtures). The six pending
-flows are currently verified only at the HTTP-replay level plus committed API
-suites; the acceptance contract requires real UI journeys **and will not be
-claimed until they run**.
+**Implemented since the guide was first written (Nov 6–8):** Playwright
+1.64.1 (Python) + Chromium are installed in the venv, a real browser-
+journey harness exists, and a deterministic mock AI provider was added —
+all containerized/disposable, no policy bypass:
 
-Smallest maintainable proposal (for future approval — intentionally not
-implemented now):
+| File | Purpose |
+|---|---|
+| `tests/acceptance/conftest.py` | Full harness: creates a uniquely-named disposable MySQL DB (`skipline_acceptance_<stamp>_<hex>`, refuse-if-exists, **dropped on every exit path**), builds the schema (`alembic upgrade head` subprocess with the real `.env` DB credentials), seeds org/branch/counter/service/3-stage-workflow/2 users/employee, starts `uvicorn app.main:app` + `scripts/mock_ai_provider.py` on free ports, tears all of it down owned-only. |
+| `tests/acceptance/test_flow1…flow6*.py` | The six pending Playwright journeys (org workflow editor, booking + owner-only tracking, employee shift→stage lifecycle, kiosk walk-in, manual→AI handoff, AI→manual prefill). |
+| `scripts/mock_ai_provider.py` | OpenAI-compatible deterministic mock implementing the strict-JSON action protocol (`search_organizations` … `book`, `reply`), data-only `TOOL_RESULT` parsing, no direct `confirmed` injection (booking only via the `/ai/conversations/{id}/book` endpoint). |
+| `tests/unit/test_ai_provider_resilience.py` | 7 passing provider failure-path tests (timeout / HTTP 429 / malformed / empty / key-never-logged) via a real `httpx.AsyncClient` + `httpx.MockTransport`. |
 
-- **Playwright** (Python) as a dev/test dependency, one file
-  `tests/ui/test_phase9_acceptance_flows.py` driving the real served app
-  (`uvicorn app.main:app`) against a disposable MySQL container with the
-  synthetic seed from the prodcheck fixture fix (org workflows per §1.4),
-  reusing the same counters/services/employee accounts created on the fly.
-- One CI job variant `ui-acceptance` (job container + Playwright browsers)
-  gated to run on demand first (`workflow_dispatch`), then on push after it
-  stabilizes. Estimated surface: ~6 journeys × ~20 actions, well under the
-  complexity of adding a full framework — justification for keeping it to
-  Playwright's single driver instead of Selenium-Grid or Cypress.
-- The kiosk flow evidence (§1.4) remains the recorded live PASS; the other
-  six flows record PASS only when real browser journeys execute.
+Local execution status: **BLOCKED** at test collection on this workstation —
+`playwright` imports `greenlet`, which the Application Control policy
+`0283ac0f` blocks (see `docs/IT_BLOCKER_CODEINTEGRITY_0283ac0f.md`). The
+harness itself (DB lifecycle + seeding) imports greenlet-free modules only
+but the browser layer cannot load on this machine and this was **not**
+worked around — no policy bypass. All six flows therefore record
+**BLOCKED** until executed on an approved machine or a CI job variant
+(`ui-acceptance`, `workflow_dispatch`-gated first) using this harness:
+
+```bash
+# on an approved machine with MySQL on DB_HOST/DB_PORT and the browser installed
+#   (.env provides real DB credentials for the disposable-DB creation;
+#    the harness only ever touches databases it created this run)
+python -m pytest tests/acceptance -x -q
+```
+
+The kiosk flow evidence (§1.4) remains the recorded live PASS.
 
 ## 10. Security checklist for future CI edits
 

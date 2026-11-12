@@ -164,7 +164,14 @@ class Settings(BaseSettings):
     ai_model: str = ""             # e.g. gpt-4o-mini (deployment-dependent)
     ai_request_timeout_seconds: float = 20.0
     ai_max_history_turns: int = 12  # bounded context (C11)
-    ai_max_tool_rounds: int = 6     # bounded tool loop per user message
+    ai_max_tool_rounds: int = 8     # bounded tool loop per user message
+    # WP1 (2026-11-09): the minimum deterministic assistant turn chain is
+    # 6 tool actions + 1 acknowledgment = 7 LLM rounds (search orgs →
+    # list services → list counters → check availability → quote price →
+    # prepare draft → reply). With the former cap of 6 the loop could
+    # never reach the acknowledgment, so a valid draft existed but the UI
+    # never received has_pending_draft and the Confirm bar never showed.
+    # 8 leaves one spare round for a protocol repair.
 
     # ── Malware scanning (Phase 8 — SEC-003, local ClamAV) ───────────────────
     # Approved approach: LOCAL CLAMAV via the clamd INSTREAM protocol.
@@ -181,6 +188,15 @@ class Settings(BaseSettings):
     # Enforcement is automatic in production; set CSRF_ENFORCE=true to
     # exercise the middleware in development / integration tests.
     csrf_enforce: bool = False
+
+    # ── File logging (Phase 9 deployment hardening — app_logs volume) ───────
+    # Optional: when LOG_DIR is set (compose sets /app/logs), the process
+    # additionally appends to a rotated file in that directory in addition
+    # to the default stderr sink; empty (default) keeps stderr-only. No PII:
+    # request logs contain only method/path/status/duration and audit
+    # entries; secrets are never logged anywhere.
+    log_dir: str = ""
+    log_file_level: str = "INFO"
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     cors_origins: List[str] = ["http://localhost:8000"]
@@ -285,6 +301,15 @@ class Settings(BaseSettings):
         production = self.app_env == "production"
         for name in ("secret_key", "jwt_secret_key"):
             self._validate_global_secret(name, production)
+        if production and self.app_debug:
+            # APP_DEBUG drives FastAPI debug pages (traceback disclosure)
+            # and SQLAlchemy SQL echo (raw query leakage). Debug mode in a
+            # production deployment is a hard configuration error, matching
+            # the "no insecure default is ever substituted" doctrine.
+            raise ValueError(
+                "APP_DEBUG=true is not permitted when APP_ENV=production. "
+                "Set APP_DEBUG=false (or rely on the compose default)."
+            )
         if not self.admin_password:
             message = (
                 "ADMIN_PASSWORD is not configured. Set the ADMIN_PASSWORD "

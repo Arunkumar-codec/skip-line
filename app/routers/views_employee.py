@@ -54,9 +54,7 @@ async def _get_employee_or_redirect(request: Request, db: AsyncSession):
 
 @router.get("/login", response_class=HTMLResponse)
 async def employee_login_page(request: Request, error: str = None):
-    return templates.TemplateResponse(
-        "shared/login.html",
-        {
+    return templates.TemplateResponse(request, "shared/login.html", {
             "request": request,
             "portal_name": "Staff & Counter Operator",
             "login_action": "/employee/login/submit",
@@ -168,9 +166,7 @@ async def employee_dashboard_page(request: Request, db: AsyncSession = Depends(g
     ).scalars().all()
     current_shift = today_shifts[0] if today_shifts else None
 
-    return templates.TemplateResponse(
-        "employee/dashboard.html",
-        {
+    return templates.TemplateResponse(request, "employee/dashboard.html", {
             "request": request,
             "current_employee": employee,
             "branch": branch,

@@ -39,7 +39,7 @@ ARCHITECTURE (requirement C1):
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -358,7 +358,9 @@ async def execute_tool(
             "slot_id": parsed.slot_id, "slot": slot_payload,
             "sub_service_ids": parsed.sub_service_ids,
             "quoted_price": _money(total),
-            "validated_at": datetime.utcnow().isoformat() + "Z",
+            "validated_at": (
+                datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            ),
         }
         conversation.draft_json = json.dumps(draft)
         await db.commit()

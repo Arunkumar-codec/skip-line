@@ -301,7 +301,16 @@ async def get_counter_queue_api(
         .where(
             and_(
                 Token.counter_id == counter_id,
-                Token.status.in_([TokenStatus.WAITING, TokenStatus.CALLED, TokenStatus.SERVING]),
+                Token.status.in_(
+                    # NOTE(WP1): TokenStatus has no SERVING member (the
+                    # in-service state is CALLED; a paused token is ON_HOLD)
+                    # — SERVING here raised AttributeError and turned every
+                    # queue poll into an unhandled 500 (acceptance run 9
+                    # evidence), which the dashboard JS swallowed and left
+                    # the operator queue stuck at "Loading queue...".
+                    [TokenStatus.WAITING, TokenStatus.CALLED,
+                     TokenStatus.IN_PROGRESS, TokenStatus.ON_HOLD],
+                ),
             )
         )
         .order_by(Token.queue_position.asc(), Token.created_at.asc())

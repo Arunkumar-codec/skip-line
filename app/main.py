@@ -57,6 +57,24 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown logic."""
     logger.info("Starting Skip Line application…")
 
+    # Phase 9 deployment hardening: when a LOG_DIR is provided (compose
+    # mounts the app_logs volume at /app/logs), append a rotated file sink
+    # IN ADDITION to the default stderr sink. Content: the same method/
+    # path/status/duration and service log lines as stderr — never secrets
+    # or raw credentials (see app/middleware/logging.py).
+    if settings.log_dir:
+        log_path = Path(settings.log_dir)
+        log_path.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            str(log_path / "skipline.log"),
+            level=settings.log_file_level.upper(),
+            rotation="20 MB",
+            retention=5,
+            enqueue=True,
+            format="{time:YYYY-MM-DDTHH:mm:ss.SSSZZ} | {level} | {message}",
+        )
+        logger.info("File logging sink active in {}", str(log_path))
+
     # Ensure output directories exist
     for d in [settings.qr_code_dir, settings.receipt_dir]:
         Path(d).mkdir(parents=True, exist_ok=True)
@@ -203,7 +221,7 @@ def create_app() -> FastAPI:
     async def landing_page(request: Request):
         from fastapi.templating import Jinja2Templates
         tmpl = Jinja2Templates(directory="templates")
-        return tmpl.TemplateResponse("public/index.html", {"request": request})
+        return tmpl.TemplateResponse(request, "public/index.html", {"request": request})
 
     @app.get("/auth/logout", tags=["Auth"])
     async def logout_all():

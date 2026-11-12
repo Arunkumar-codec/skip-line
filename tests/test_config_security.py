@@ -34,10 +34,31 @@ DEV = "development"
 def _settings(**overrides):
     """Build a Settings instance with explicit kwargs (env files ignored)."""
     overrides.setdefault("_env_file", None)   # hermetic: .env cannot backfill
+    overrides.setdefault("app_debug", False)  # production tests configure the
+    # deployment honestly (compose sets APP_DEBUG=false by default); debug
+    # policy is asserted explicitly in test_prod_rejects_debug_true.
     return Settings(**overrides)
 
 
 # ── 1. valid production values are accepted ──────────────────────────────────
+
+def test_prod_rejects_debug_true():
+    """Debug pages/SQL echo in production are a hard configuration error
+    (SEC review: FastAPI debug = traceback disclosure; app_debug also
+    drives `echo` on the async engine)."""
+    with pytest.raises(ValueError, match="APP_DEBUG"):
+        _settings(
+            app_env=PROD, app_debug=True,
+            db_password="Prodcheck-DB-2026-strong",
+            secret_key="pk-" + "securevalue" * 5,
+            jwt_secret_key="pk-jwt-" + "securevalue" * 5,
+            admin_password="Prodcheck-Admin-2026!",
+        )
+    # development may still use debug mode
+    s = _settings(app_env="development", app_debug=True,
+                  db_password="dev-db-password")
+    assert s.app_debug is True
+
 
 def test_prod_accepts_strong_secrets():
     s = _settings(

@@ -73,7 +73,7 @@ async def _get_org_or_redirect(request: Request, db: AsyncSession):
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
-    return templates.TemplateResponse("shared/login.html", {
+    return templates.TemplateResponse(request, "shared/login.html", {
         "request": request,
         "portal_name": "Organization",
         "login_action": "/org/login/submit",
@@ -96,7 +96,7 @@ async def login_submit(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request, error: str = None, success: str = None):
-    return templates.TemplateResponse("org/register.html", {
+    return templates.TemplateResponse(request, "org/register.html", {
         "request": request,
         "error": error,
         "success": success,
@@ -137,7 +137,7 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         .limit(10)
     )).scalars().all()
 
-    return templates.TemplateResponse("org/dashboard.html", {
+    return templates.TemplateResponse(request, "org/dashboard.html", {
         "request": request,
         "current_org": org,
         "active_page": "dashboard",
@@ -157,7 +157,7 @@ async def queue_page(request: Request, db: AsyncSession = Depends(get_db)):
         return redir
 
     counters = await org_service.list_counters(db, org.id)
-    return templates.TemplateResponse("org/queue.html", {
+    return templates.TemplateResponse(request, "org/queue.html", {
         "request": request,
         "current_org": org,
         "active_page": "queue",
@@ -241,7 +241,7 @@ async def display_page(
         )
     )
     ticker_text = ticker_result.scalar_one_or_none() or display_data.get("announcement", "")
-    return templates.TemplateResponse("public/display.html", {
+    return templates.TemplateResponse(request, "public/display.html", {
         "request": request,
         "org_id": org.id,
         "org_name": org.name,
@@ -281,7 +281,7 @@ async def counters_page(request: Request, db: AsyncSession = Depends(get_db)):
         }
         for c in counters
     ]
-    return templates.TemplateResponse("org/counters.html", {
+    return templates.TemplateResponse(request, "org/counters.html", {
         "request": request,
         "current_org": org,
         "active_page": "counters",
@@ -305,7 +305,7 @@ async def workflows_page(request: Request, db: AsyncSession = Depends(get_db)):
     counters = await org_service.list_counters(db, org.id)
     workflows = await workflow_service.list_workflows(db, org_id=org.id)
 
-    return templates.TemplateResponse("org/workflows.html", {
+    return templates.TemplateResponse(request, "org/workflows.html", {
         "request": request,
         "current_org": org,
         "active_page": "workflows",
@@ -374,7 +374,7 @@ async def schedule_page(request: Request, db: AsyncSession = Depends(get_db)):
         for r in weekly
     ]
     exceptions_json = [_exception_row_json(r) for r in exceptions]
-    return templates.TemplateResponse("org/schedule.html", {
+    return templates.TemplateResponse(request, "org/schedule.html", {
         "request": request,
         "current_org": org,
         "active_page": "schedule",
@@ -558,7 +558,7 @@ async def services_page(request: Request, db: AsyncSession = Depends(get_db)):
         }
         for s in services
     ]
-    return templates.TemplateResponse("org/services.html", {
+    return templates.TemplateResponse(request, "org/services.html", {
         "request": request,
         "current_org": org,
         "active_page": "services",
@@ -591,7 +591,7 @@ async def forms_page(request: Request, db: AsyncSession = Depends(get_db)):
         }
         for f in forms
     ]
-    return templates.TemplateResponse("org/forms.html", {
+    return templates.TemplateResponse(request, "org/forms.html", {
         "request": request,
         "current_org": org,
         "active_page": "forms",
@@ -611,7 +611,7 @@ async def identities_page(request: Request, db: AsyncSession = Depends(get_db)):
 
     from app.services import identity_service
     identities = await identity_service.list_identities_for_review(db, organization_id=org.id)
-    return templates.TemplateResponse("org/identities.html", {
+    return templates.TemplateResponse(request, "org/identities.html", {
         "request": request,
         "current_org": org,
         "active_page": "identities",
@@ -627,7 +627,7 @@ async def profile_page(request: Request, db: AsyncSession = Depends(get_db)):
     if redir:
         return redir
 
-    return templates.TemplateResponse("org/profile.html", {
+    return templates.TemplateResponse(request, "org/profile.html", {
         "request": request,
         "current_org": org,
         "active_page": "profile",
@@ -661,7 +661,7 @@ async def payments_page(
     payouts, _ = await payout_service.list_payouts(db, org.id, per_page=10)
     bank_account = await bank_account_service.get_bank_account(db, org.id)
 
-    return templates.TemplateResponse("org/payments.html", {
+    return templates.TemplateResponse(request, "org/payments.html", {
         "request": request,
         "current_org": org,
         "active_page": "payments",
@@ -786,7 +786,7 @@ async def reports_page(request: Request, db: AsyncSession = Depends(get_db)):
             "avg_min": avg_min,
         })
 
-    return templates.TemplateResponse("org/reports.html", {
+    return templates.TemplateResponse(request, "org/reports.html", {
         "request": request,
         "current_org": org,
         "active_page": "reports",
@@ -808,7 +808,7 @@ async def settings_page(request: Request, db: AsyncSession = Depends(get_db)):
         return redir
 
     org_settings = await org_service.get_org_settings(db, org.id)
-    return templates.TemplateResponse("org/settings.html", {
+    return templates.TemplateResponse(request, "org/settings.html", {
         "request": request,
         "current_org": org,
         "active_page": "settings",
@@ -867,9 +867,7 @@ async def branches_page(request: Request, db: AsyncSession = Depends(get_db)):
         }
         for b in branches
     ]
-    return templates.TemplateResponse(
-        "org/branches.html",
-        {
+    return templates.TemplateResponse(request, "org/branches.html", {
             "request": request,
             "current_org": org,
             "active_page": "branches",
@@ -905,9 +903,7 @@ async def employees_page(request: Request, db: AsyncSession = Depends(get_db)):
         }
         for e in employees
     ]
-    return templates.TemplateResponse(
-        "org/employees.html",
-        {
+    return templates.TemplateResponse(request, "org/employees.html", {
             "request": request,
             "current_org": org,
             "active_page": "employees",
@@ -928,9 +924,7 @@ async def shifts_page(request: Request, db: AsyncSession = Depends(get_db)):
     org, redir = await _get_org_or_redirect(request, db)
     if redir:
         return redir
-    return templates.TemplateResponse(
-        "org/shifts.html",
-        {
+    return templates.TemplateResponse(request, "org/shifts.html", {
             "request": request,
             "current_org": org,
             "active_page": "shifts",
@@ -944,9 +938,7 @@ async def kiosks_page(request: Request, db: AsyncSession = Depends(get_db)):
     if redir:
         return redir
     branches = await branch_service.list_branches(db, org.id)
-    return templates.TemplateResponse(
-        "org/kiosks.html",
-        {
+    return templates.TemplateResponse(request, "org/kiosks.html", {
             "request": request,
             "current_org": org,
             "active_page": "kiosks",
@@ -984,7 +976,7 @@ async def org_feedback_page(request: Request, db: AsyncSession = Depends(get_db)
             )
         ).scalars().all()
     )
-    return templates.TemplateResponse("org/feedback.html", {
+    return templates.TemplateResponse(request, "org/feedback.html", {
         "request": request,
         "current_org": org,
         "active_page": "feedback",
@@ -1020,7 +1012,7 @@ async def org_cases_page(request: Request, db: AsyncSession = Depends(get_db)):
             )
         ).scalars().all()
     ) if ids else []
-    return templates.TemplateResponse("org/cases.html", {
+    return templates.TemplateResponse(request, "org/cases.html", {
         "request": request,
         "current_org": org,
         "active_page": "cases",
@@ -1043,7 +1035,7 @@ async def org_kyc_page(request: Request, db: AsyncSession = Depends(get_db)):
     requirements = await kyc_service.get_doc_requirements(
         db, kyc.org_category or org.org_type, org.id
     )
-    return templates.TemplateResponse("org/kyc.html", {
+    return templates.TemplateResponse(request, "org/kyc.html", {
         "request": request,
         "current_org": org,
         "active_page": "kyc",

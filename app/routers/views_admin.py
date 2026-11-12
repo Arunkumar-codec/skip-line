@@ -63,7 +63,7 @@ async def _pending_count(db: AsyncSession) -> int:
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
-    return templates.TemplateResponse("shared/login.html", {
+    return templates.TemplateResponse(request, "shared/login.html", {
         "request": request,
         "portal_name": "Admin",
         "login_action": "/admin/login/submit",
@@ -114,7 +114,7 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         labels.append(day.strftime("%a"))
         data.append(count)
 
-    return templates.TemplateResponse("admin/dashboard.html", {
+    return templates.TemplateResponse(request, "admin/dashboard.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "dashboard",
@@ -145,7 +145,7 @@ async def organizations(
 
     pc = await _pending_count(db)
     orgs, total = await admin_service.get_all_organizations(db, status=status, page=page, per_page=per_page)
-    return templates.TemplateResponse("admin/organizations.html", {
+    return templates.TemplateResponse(request, "admin/organizations.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "organizations",
@@ -190,7 +190,7 @@ async def users(
     )
     users_list = result.scalars().all()
 
-    return templates.TemplateResponse("admin/users.html", {
+    return templates.TemplateResponse(request, "admin/users.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "users",
@@ -233,7 +233,7 @@ async def tokens_page(
     )
     tokens_list = result.scalars().all()
 
-    return templates.TemplateResponse("admin/tokens.html", {
+    return templates.TemplateResponse(request, "admin/tokens.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "tokens",
@@ -296,7 +296,7 @@ async def revenue_report(
         .order_by(Payment.paid_at.desc()).limit(20)
     )).scalars().all()
 
-    return templates.TemplateResponse("admin/reports_revenue.html", {
+    return templates.TemplateResponse(request, "admin/reports_revenue.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "revenue",
@@ -353,7 +353,7 @@ async def queue_report(
 
     total_tokens = sum(status_counts.values())
 
-    return templates.TemplateResponse("admin/reports_queue.html", {
+    return templates.TemplateResponse(request, "admin/reports_queue.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "queue_stats",
@@ -382,7 +382,7 @@ async def settings_page(
         return redir
 
     pc = await _pending_count(db)
-    return templates.TemplateResponse("admin/settings.html", {
+    return templates.TemplateResponse(request, "admin/settings.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "settings",
@@ -407,7 +407,7 @@ async def change_password_page(
         return redir
 
     pc = await _pending_count(db)
-    return templates.TemplateResponse("admin/change_password.html", {
+    return templates.TemplateResponse(request, "admin/change_password.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "change_password",
@@ -515,7 +515,7 @@ async def finance_page(
         .order_by(Organization.name)
     )).all()
 
-    return templates.TemplateResponse("admin/finance.html", {
+    return templates.TemplateResponse(request, "admin/finance.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "finance",
@@ -557,7 +557,7 @@ async def admin_kyc_page(request: Request, db: AsyncSession = Depends(get_db)):
     from app.services import kyc_service
 
     queue = await kyc_service.review_queue(db)
-    return templates.TemplateResponse("admin/kyc.html", {
+    return templates.TemplateResponse(request, "admin/kyc.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "kyc",
@@ -583,7 +583,7 @@ async def admin_cases_page(request: Request, db: AsyncSession = Depends(get_db))
             )
         ).scalars().all()
     )
-    return templates.TemplateResponse("admin/cases.html", {
+    return templates.TemplateResponse(request, "admin/cases.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "support",
@@ -603,7 +603,7 @@ async def admin_knowledge_page(request: Request, db: AsyncSession = Depends(get_
     from app.services import knowledge_service
 
     solutions = await knowledge_service.list_solutions(db, None, platform_admin=True)
-    return templates.TemplateResponse("admin/knowledge.html", {
+    return templates.TemplateResponse(request, "admin/knowledge.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "knowledge",
@@ -633,7 +633,7 @@ async def admin_feedback_page(request: Request, db: AsyncSession = Depends(get_d
             )
         ).scalars().all()
     )
-    return templates.TemplateResponse("admin/feedback_moderation.html", {
+    return templates.TemplateResponse(request, "admin/feedback_moderation.html", {
         "request": request,
         "current_admin": admin,
         "active_page": "feedback",

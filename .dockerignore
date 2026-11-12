@@ -1,0 +1,4 @@
+# Never bake runtime secrets into the image (secret-scan closure, Nov 8 2026):
+# the app receives configuration via compose `env_file` / environment at
+# runtime, not from a copy inside the image.
+.env

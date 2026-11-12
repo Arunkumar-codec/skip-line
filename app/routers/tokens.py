@@ -15,6 +15,7 @@ from app.database import get_db
 from app.dependencies import get_optional_user
 from app.services import token_service
 from app.utils import pdf_generator, qr_generator, signed_qr
+from models.branch import Branch
 from models.counter import Counter
 from models.organization import Organization
 from models.service import Service
@@ -90,7 +91,14 @@ async def download_receipt(
     org = await db.get(Organization, token.organization_id)
     counter = await db.get(Counter, token.counter_id)
     service = await db.get(Service, token.service_id) if token.service_id else None
-    branch = getattr(counter, "branch", None)
+    # WP1 acceptance fix (2026-11-10): `Counter.branch` is a default
+    # lazy="select" relationship — accessing it synchronously here raised
+    # sqlalchemy.exc.MissingGreenlet inside the async route (unhandled 500 →
+    # receipt downloads broken for any counter that has a branch). Load the
+    # branch explicitly instead.
+    branch: Optional[Branch] = None
+    if counter is not None and counter.branch_id:
+        branch = await db.get(Branch, counter.branch_id)
 
     slot_label: Optional[str] = None
     if token.slot_id:

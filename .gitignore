@@ -77,6 +77,8 @@ Thumbs.db
 *.rar
 *-results.txt
 test-results.txt
+# Playwright browser-run output directory (WP1 pre-commit cleanup)
+test-results/
 
 # Local databases
 *.db
