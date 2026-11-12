@@ -8,6 +8,7 @@ import json
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_org, get_current_user
 from app.schemas.common import APIResponse
@@ -44,6 +45,10 @@ async def initiate_payment(
             db, token.id, user.id, token.organization_id, amount
         )
         return APIResponse(data=order)
+    except payment_service.PaymentsNotConfigured as e:
+        # WP3: clean "payments disabled" response when Razorpay is not
+        # configured — never an unhandled 500 traceback.
+        raise HTTPException(status_code=503, detail=str(e))
     except PermissionError as e:
         # FIN-001: organization payment-method policy enforcement
         raise HTTPException(status_code=403, detail=str(e))
@@ -66,6 +71,10 @@ async def verify_payment(
             razorpay_signature=body.razorpay_signature,
         )
         return APIResponse(message="Payment verified", data=PaymentRead.model_validate(payment))
+    except payment_service.PaymentsNotConfigured as e:
+        # WP3: clean "payments disabled" response when Razorpay is not
+        # configured — never a misreported 400 signature error or a 500.
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -101,6 +110,14 @@ async def razorpay_webhook(
     Ingest Razorpay webhooks with signature verification and replay safety (PAY-003, PAY-005).
     """
     body_bytes = await request.body()
+    # WP3: a controlled "not configured" response when NO webhook secret is
+    # available (webhook secret falls back to the key secret) — ingestion is
+    # disabled rather than reporting a misleading signature failure.
+    if not (settings.razorpay_webhook_secret or settings.razorpay_key_secret):
+        raise HTTPException(
+            status_code=503,
+            detail="Razorpay webhook ingestion is not configured on this deployment",
+        )
     if not webhook_service.verify_webhook_signature(body_bytes, x_razorpay_signature or ""):
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 

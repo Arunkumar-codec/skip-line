@@ -196,3 +196,50 @@ except R3's compose bring-up items (Docker daemon offline locally —
 compose hardening is in place and unit-tested; first containerized bring-up
 remains a hosted-CI / owner gate, noting the first-init-only volume caveat
 from the origin report). Phase 10 remains untouched.
+
+---
+
+## WP3 addendum (Nov 12, 2026) — application secret rotation (R3 closure, application layer)
+
+Executed by `scripts/wps3_secret_hardening.py` on baseline HEAD
+`9872cd50e16a3b1990745c6c3f7c80d73b4f13fb` (post-WP2-checkpoint), **all WP3
+changes left uncommitted**. No secret value was ever printed or written to
+evidence (masked `***`; evidence:
+`%LOCALAPPDATA%\Temp\opencode\wp3\wp3_secret_rotation.json`).
+
+1. **`SECRET_KEY` / `JWT_SECRET_KEY` rotated** — the two dev placeholder
+   values were replaced with distinct 64-character cryptographically random
+   alphanumeric secrets (generated in-process via `secrets`; strictly
+   distinct from each other and from `ADMIN_PASSWORD`). `.env` was rewritten
+   atomically (temp file → `os.replace`), CRLF preserved (66 lines), all
+   other keys — including the WP2 `skipline_app` / `MYSQL_ROOT_PASSWORD`
+   identities — untouched. Production-mode validation
+   (`Settings(app_env="production", app_debug=False)`) was simulated
+   in-process with warnings-as-errors: **zero weak-secret errors/warnings**.
+   Note: rotation invalidates all previously issued JWTs and any values
+   signed with the old `SECRET_KEY` (sessions re-authenticate).
+2. **`ADMIN_PASSWORD` rotated — including the LIVE seeded account.** The
+   `.env` value alone only seeds when NO admins exist
+   (`seed_default_admin` is a no-op otherwise), so the already-seeded
+   default Super Admin in `skipline.admins` was rotated in the same
+   operation using the app's own `hash_password`: the old dev-era hash was
+   overwritten, the NEW password verifies, and the old development password
+   is **rejected** (booleans verified; account id not printed). The old dev
+   ADMIN_PASSWORD is now unrecoverable (overwritten in `.env` and its hash
+   replaced in the DB) — closing the "generated dev ADMIN_PASSWORD" live
+   credential noted in the Nov 8 origin audit (Row 45).
+3. **First-run note (idempotent recovery):** the very first driver run
+   aborted on a module-path error AFTER the `.env` rewrite but BEFORE the
+   DB rotation; the rerun force-set the admin hash idempotently and carried
+   the post-rotation verification. No secret was exposed at any point.
+4. **Optional provider keys (`RAZORPAY_*`, `MAIL_*`, `TWILIO_*`) remain
+   non-empty placeholder values** — unchanged by WP3 (no real provider
+   credentials exist; the app never contacted any provider, per Row 45).
+   WP3 added graceful-degradation guarantees instead: unconfigured/failed
+   Razorpay now yields a controlled `PaymentsNotConfigured` → HTTP 503
+   (never a 500 traceback), and the durable outbox marks unconfigured
+   channels `SUPPRESSED ("provider unconfigured")` with honest state and no
+   retry churn (backoff 30/60/120 s is exponential; the ~100 ms loop is only
+   the bounded commit-visibility poll). Owner decision (human): either fill
+   real provider credentials (WP3 human gate) or blank the placeholder keys
+   so the clean SUPPRESSED path engages.

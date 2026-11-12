@@ -35,6 +35,24 @@ def _razorpay_client() -> razorpay.Client:
     )
 
 
+class PaymentsNotConfigured(RuntimeError):
+    """Raised when the Razorpay path is used while its keys are unconfigured.
+
+    WP3 graceful degradation: the router maps this to a clean, controlled
+    503 ("payments disabled") instead of letting the SDK fail with an
+    unhandled error that surfaces as a 500 traceback.
+    """
+
+
+def ensure_razorpay_configured() -> None:
+    """Fail fast — before any SDK call — when Razorpay is not configured."""
+    if not (settings.razorpay_key_id and settings.razorpay_key_secret):
+        raise PaymentsNotConfigured(
+            "Online payments are not configured on this deployment "
+            "(Razorpay credentials absent). Use cash/walk-in payment."
+        )
+
+
 async def create_payment_order(
     db: AsyncSession, token_id: int, user_id: Optional[int], org_id: int, amount: Decimal
 ) -> dict:
@@ -48,6 +66,10 @@ async def create_payment_order(
     # never be created through this channel.
     from app.services import payment_policy_service
     await payment_policy_service.ensure_method_allowed(db, org_id, PaymentMethod.RAZORPAY.value)
+    # WP3: graceful degradation — after policy enforcement, before any SDK
+    # contact. Unconfigured Razorpay keys yield a controlled
+    # PaymentsNotConfigured (router -> 503), never a raw SDK failure.
+    ensure_razorpay_configured()
     amount_paise = int(amount * 100)   # Razorpay uses smallest currency unit
 
     order = client.order.create({
@@ -98,6 +120,10 @@ async def verify_and_record_payment(
     razorpay_signature: str,
 ) -> Payment:
     """Verify Razorpay signature and mark payment as paid."""
+    # WP3: controlled 503 path when Razorpay is unconfigured (instead of a
+    # signature mismatch against an empty secret, which would misreport a
+    # configuration gap as a client error).
+    ensure_razorpay_configured()
     if not _verify_signature(razorpay_order_id, razorpay_payment_id, razorpay_signature):
         raise ValueError("Invalid payment signature")
 
