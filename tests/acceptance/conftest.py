@@ -81,7 +81,7 @@ def _env_db() -> dict[str, str]:
         out[key] = val
     out["DB_HOST"] = out["DB_HOST"] or "127.0.0.1"
     out["DB_PORT"] = out["DB_PORT"] or "3306"
-    out["DB_USER"] = out["DB_USER"] or "skipline_user"
+    out["DB_USER"] = out["DB_USER"] or "skipline_app"  # WP2 least-privilege identity
     return out
 
 

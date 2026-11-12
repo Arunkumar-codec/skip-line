@@ -91,7 +91,9 @@ class Settings(BaseSettings):
     db_host: str = "localhost"
     db_port: int = 3306
     db_name: str = "skipline"
-    db_user: str = "skipline_user"
+    # WP2 (R2): least-privilege application identity (skipline_app) — root is
+    # never a valid runtime value. Overridden by DB_USER in the environment.
+    db_user: str = "skipline_app"
     db_password: str = ""
 
     # ── WebSocket scaling (Phase 6) ──────────────────────────────────────────

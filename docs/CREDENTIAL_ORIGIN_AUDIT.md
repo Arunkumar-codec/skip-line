@@ -166,3 +166,33 @@ no secret value printed.
    `skipline_phase9_prodcheck` / `skipline_synccheck` (and `skipline`)
    were never modified or deleted; rehearsal teardown dropped only its own
    uniquely-named `skipline_wps_*` databases.
+
+---
+
+## WP2 addendum (Nov 12, 2026) — R0–R9 EXECUTED, root rotation + least-privilege transition CLOSED
+
+Executed by `scripts/wps2_privilege_transition.py` (+ `wps2_privcheck_verify.py`,
+`wps2_redact_root_leaks.py`) on baseline HEAD `c2fa863e38643f148cbf8f91b7222a2a3345c22f`,
+working tree clean at start, **all WP2 changes left uncommitted** for owner
+review. No secret value was ever printed or written to any evidence file
+(masked `***` throughout; evidence:
+`%LOCALAPPDATA%\Temp\opencode\wp2\wps2_evidence.json`).
+
+| Step | Result |
+|---|---|
+| **R8-redact (run FIRST, before rotation)** | The compromised root credential was redacted from disk while still known-in-memory: 2 shell-transcript artifacts (`sh_1b4e0fa3e001pRH491F2PKXq22.out` — the Nov 7 artifact referenced above — and `sh_1bae58bb6001f75mGgEw2dCLpz.out`) redacted in place with `***REDACTED-WP2***`. Order deviation from the task list (R8 after R1) is deliberate: it removes the compromised value from disk in the same process that rotates it. |
+| **R0 pre-transition backup** | `mysqldump` of exactly the three protected databases → `pre_wp2_backup_20261112T102242Z.sql` (183,739 bytes, sha256 `b5b2ac5b…`, `Dump completed` footer verified; credential passed via `MYSQL_PWD` env var, never on the command line). |
+| **R2/R3 least-privilege account** | `skipline_app`@`localhost` provisioned (same `caching_sha2_password` plugin as root). SHOW GRANTS: `USAGE ON *.*` (zero global privileges) + 4 pattern grants (`skipline.*`, `skipline_acceptance\_%`, `skipline_wps\_%`, `skipline_test\_%`) with exactly SELECT/INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/INDEX/REFERENCES/CREATE TEMPORARY TABLES/LOCK TABLES. Zero banned privileges (SUPER/GRANT OPTION/FILE/PROCESS/SHUTDOWN/RELOAD). Empirical DDL probe: the pattern grants allow CREATE/DROP of disposable probe DBs. **Documented deviation:** no `@'%'` host variant was created — compose's `app` service connects to the compose-internal `db` container (its own MySQL, user created by the entrypoint from `MYSQL_USER`), the host MySQL is loopback-only, and the Docker daemon is offline locally; add the `@'%'` grant at compose bring-up if the containerized path requires it. |
+| **R1 root rotation** | `root`@`localhost` rotated (`ALTER USER … IDENTIFIED BY` + `FLUSH PRIVILEGES`). New credential VERIFIED by authentication; the old compromised credential REJECTED with 1045 Access denied immediately after. The old value is now unrecoverable (rotated + removed from disk) — this closes the R1 mandate of WP1 addendum item 3. |
+| **R4 configuration** | `.env` rewritten atomically (temp file → `ALTER USER` success → `os.replace`; CRLF preserved, 66 lines): `DB_USER=skipline_app`, new app credential, `MYSQL_ROOT_PASSWORD` added (admin-only). `docker-compose.yml`: `MYSQL_USER`/`DB_USER` now `${DB_USER:?required}` guards in db + backup services (weak `skipline_user` fallback removed); `app/config.py` default `db_user` → `skipline_app`; `.env.example` documents the least-privilege identity with placeholder-only passwords; acceptance conftest fallback aligned. 14/14 unit tests in `tests/unit/test_db_least_privilege_config.py` lock this in. |
+| **R7 least-privilege verification** | (a) Full alembic chain **0001→0018 in 47.09 s** on disposable `skipline_wps_privcheck_20261112102657` created/migrated/verified (alembic_version=0018, 65 tables)/dropped **entirely as `skipline_app`, zero root fallback** (`wps2_privcheck_evidence.json`). (b) Acceptance flows 1a/2/3/5 **4/4 PASS** (177.8 s) under the new identity — conftest now creates/seeds/tears-down its disposable DB as `skipline_app`; teardown clean, no leftover disposable DBs. (c) Post-transition: protected databases intact; runtime read as `skipline_app` against `skipline` OK. |
+| **R8 residual-leak sweep (post-rotation, shape-based)** | Because the old value exists nowhere in memory or config after rotation, a credential-SHAPE scan (root URLs / `DB_PASSWORD=` / `IDENTIFIED BY` / `-p` literals, 20+ alnum) over all 360 shell-transcript and `%TEMP%\opencode` artifacts detected **0 remaining credential-shaped values**, and every detected value had been auth-tested before redaction (root auth attempt expecting 1045 — proving it was the dead rotated-out credential, never the new one). `LIVE credentials found: 0`. Evidence: `wps2_leak_redaction.json`. This closes the WP1 addendum item 3 owner-cleanup item (transcript `.out`). |
+
+**Net state:** the application runtime identity is now the dedicated
+least-privilege `skipline_app`; root is administration-only and its
+compromised password is rotated out and absent from disk; every residual
+disclosure artifact is redacted; the remediation plan **R0–R9 is closed**
+except R3's compose bring-up items (Docker daemon offline locally —
+compose hardening is in place and unit-tested; first containerized bring-up
+remains a hosted-CI / owner gate, noting the first-init-only volume caveat
+from the origin report). Phase 10 remains untouched.
