@@ -172,6 +172,10 @@ class Token(Base, TimestampMixin):
     token_services: Mapped[list["TokenServiceItem"]] = relationship(
         "TokenServiceItem", back_populates="token", cascade="all, delete-orphan", lazy="selectin"
     )
+    # Phase 10 (§16.6): appended prediction snapshots (initial + recalcs).
+    wait_time_estimates: Mapped[list["WaitTimeEstimate"]] = relationship(
+        "WaitTimeEstimate", back_populates="token", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Token id={self.id} number={self.token_number!r} status={self.status}>"

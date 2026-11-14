@@ -87,9 +87,9 @@
   </div>
   {% endif %}
 
-  <!-- ETA -->
+  <!-- ETA (Phase 10 §16.4: estimate or range + label + updated timestamp) -->
   {% if tracking.status == 'waiting' %}
-  <div class="row g-3 mb-3">
+  <div class="row g-3 mb-1">
     <div class="col-6">
       <div class="eta-badge">
         <div class="eta-number" id="peopleAhead">{{ tracking.people_ahead }}</div>
@@ -98,10 +98,27 @@
     </div>
     <div class="col-6">
       <div class="eta-badge">
+        {% if tracking.estimated_wait_status == 'insufficient_data' or tracking.estimated_wait_minutes is none %}
+        <div class="eta-number" id="etaMin">—</div>
+        <div class="eta-unit">Est. Wait (not enough data yet)</div>
+        {% else %}
         <div class="eta-number" id="etaMin">{{ tracking.estimated_wait_minutes }}</div>
         <div class="eta-unit">Est. Wait (min)</div>
+        {% endif %}
       </div>
     </div>
+  </div>
+  <div class="text-center small text-muted mb-3">
+    <div>Estimated (not guaranteed)</div>
+    <div id="etaRange">
+      {% if tracking.estimated_wait_range_min is not none and tracking.estimated_wait_range_max is not none %}
+      likely {{ tracking.estimated_wait_range_min }}–{{ tracking.estimated_wait_range_max }} min
+      {% endif %}
+    </div>
+    <div id="etaUpdated">
+      {% if tracking.estimated_at %}Updated {{ tracking.estimated_at }}{% endif %}
+    </div>
+    <div id="etaExplanation" class="fst-italic">{{ tracking.estimate_explanation or '' }}</div>
   </div>
   {% elif tracking.status == 'called' %}
   <div class="alert alert-primary d-flex gap-3 align-items-center mb-3">
@@ -210,7 +227,23 @@ function applyUpdate(d) {
 
   if (el('tokenStatus')) el('tokenStatus').textContent = s.replace(/_/g,' ').toUpperCase();
   if (el('peopleAhead')) el('peopleAhead').textContent = d.people_ahead;
-  if (el('etaMin'))      el('etaMin').textContent      = d.estimated_wait_minutes;
+  // Phase 10 (§16.4): estimate or honest "not enough data", with range,
+  // label and updated-at timestamp refreshed from every WS/API update.
+  if (el('etaMin')) {
+    el('etaMin').textContent =
+      (d.estimated_wait_status === 'insufficient_data' || d.estimated_wait_minutes == null)
+        ? '—' : d.estimated_wait_minutes;
+  }
+  if (el('etaRange')) {
+    const hasRange = d.estimated_wait_range_min != null && d.estimated_wait_range_max != null;
+    el('etaRange').textContent = hasRange ? `likely ${d.estimated_wait_range_min}–${d.estimated_wait_range_max} min` : '';
+  }
+  if (el('etaUpdated')) {
+    el('etaUpdated').textContent = d.estimated_at ? `Updated ${d.estimated_at}` : '';
+  }
+  if (el('etaExplanation')) {
+    el('etaExplanation').textContent = d.estimate_explanation || '';
+  }
   if (el('queuePos'))    el('queuePos').textContent    = d.queue_position;
   if (el('nowServing'))  el('nowServing').textContent  = d.current_token_at_counter || '—';
 

@@ -110,7 +110,16 @@ class TokenTrackingResponse(BaseModel):
     status: str
     queue_position: int
     people_ahead: int
-    estimated_wait_minutes: int
+    # Phase 10 (§16.1): None when the honest answer is "insufficient data"
+    # (never a fabricated default). Range/status/timestamp/explanation
+    # accompany every estimate for §16.4 presentation rules.
+    estimated_wait_minutes: Optional[int] = None
+    estimated_wait_range_min: Optional[int] = None
+    estimated_wait_range_max: Optional[int] = None
+    estimated_wait_status: str = "estimate"
+    estimated_wait_basis: Optional[str] = None
+    estimated_at: Optional[str] = None
+    estimate_explanation: Optional[str] = None
     current_token_at_counter: Optional[str]
     counter_name: str
     # Phase 9 Workstream B: present only when the token's service has a

@@ -19,7 +19,7 @@ from models.branch import Branch
 from models.counter import Counter
 from models.organization import Organization
 from models.service import Service
-from models.token import Token
+from models.token import Token, TokenStatus
 from models.user import User
 
 router = APIRouter()
@@ -142,6 +142,22 @@ async def download_receipt(
     # the ref. Owner downloads of user-owned tokens are unaffected.
     receipt_guest_name = token.guest_name if token.user_id is not None else None
 
+    # Phase 10 (§16.5/§22): the printed estimate is a STATIC snapshot of the
+    # authoritative estimator's output at generation time, always stamped
+    # with its generation moment. Insufficient data prints honestly.
+    estimate_snapshot: dict = {}
+    if token.status == TokenStatus.WAITING:
+        from app.services import wait_time_service
+        est = await wait_time_service.estimate_for_token(db, token)
+        estimate_snapshot = {
+            "estimated_wait_minutes": est.estimated_minutes,
+            "estimated_wait_range_min": est.range_min,
+            "estimated_wait_range_max": est.range_max,
+            "estimate_status": est.status,
+            "estimate_generated_at": est.estimated_at.replace(tzinfo=None)
+            if est.estimated_at.tzinfo else est.estimated_at,
+        }
+
     receipt_path = await pdf_generator.generate_token_receipt(
         token_id=token.id,
         org_name=org.name if org else "Unknown",
@@ -155,6 +171,11 @@ async def download_receipt(
         branch_name=getattr(branch, "name", None) if branch else None,
         slot_label=slot_label,
         payment_label=payment_label,
+        estimated_wait_minutes=estimate_snapshot.get("estimated_wait_minutes"),
+        estimated_wait_range_min=estimate_snapshot.get("estimated_wait_range_min"),
+        estimated_wait_range_max=estimate_snapshot.get("estimated_wait_range_max"),
+        estimate_status=estimate_snapshot.get("estimate_status"),
+        estimate_generated_at=estimate_snapshot.get("estimate_generated_at"),
         instructions=(
             f"Note your token number {token.token_number}. When it is displayed "
             "or called, proceed to the counter named on this receipt. "

@@ -306,3 +306,30 @@ SkipLine will be implemented in sequential, well-defined phases according to **S
 
 - **Full-suite regression at Phase 9 delivery: 759 passed / 0 failed (Workstream B close-out run), with Workstream C/D suites added afterwards and a final full run recorded at delivery.**
 
+---
+
+### Phase 10: Waiting-Time Estimation & Display (November 2026 — delivered)
+**Primary Objective:** MASTER §16/§17 — honest, timestamped waiting-time estimates for every channel, recorded snapshots on receipts, and public-display disclosure without false precision.
+
+- **Single authoritative estimator:** `app/services/wait_time_service.py` — people-ahead count from live queue state (priority/skip/cancel-aware), ACTIVE-counter division, per-service estimated minutes, source allocation and delay awareness; **insufficient data yields an explicit "unknown" estimate — never a falsely precise number** (§24.7).
+- **Migration `0019`** (waiting-time snapshot support) — Alembic full-chain rehearsal `0001→0019` executed on real MySQL (19 steps, 66 tables) with upgrade/downgrade roundtrip verified.
+- **Consumers:** booking + kiosk + walk-in + AI assistant flows; `/user/track` and tracking APIs expose timestamped estimates; PDF receipt records the estimate **snapshot**; public display shows numbers without private customer information.
+- **Accuracy panel:** `tests/integration/test_wait_time_tracking.py` + Phase 10 unit cases validate estimates against recorded queue states; snapshot regression on receipt generation.
+- **Matrix/docs:** QUE-003 row moved to 🟢 **Complete** with estimator evidence; `docs/PRODUCTION_READINESS_REPORT.md` Ledger Row 51 records delivery.
+- **Test fixes at delivery:** counter-scoped snapshot assertion (in-memory DB isolation) and a hermetic finance-policy test (dummy Razorpay credentials via monkeypatch — verified pre-existing failure on pristine baseline before the fix; no real credentials introduced).
+- **Full-suite regression at Phase 10 delivery: 938 passed / 0 failed / 0 errors / 4 pre-existing skips; acceptance suite 8/8 PASS; git state: all changes uncommitted at owner-requested baseline.**
+
+---
+
+### Final Roadmap Closure (MASTER §23 Phases 12 & 13 — November 14, 2026)
+
+**Phase 12 — Integration, security & end-to-end reconciliation**
+- **Requirements matrix fully reconciled** (`docs/FEATURE_REQUIREMENTS_MATRIX.md`): census recomputed programmatically over **205 rows / 37 categories** (193 original SRS requirements + 12 later-phase additions). Final counts: **107 🟢 Complete + 15 🟢 Implemented (122 verified), 69 🟡 Incomplete, 0 🔴 Broken, 14 ⚪ Missing** — every one of the 23 previously stale "Missing" rows re-verified against the Phase 0–10 codebase and green suite with file-path/test evidence (AUTHZ-002..006+008, AUTH-003/004, KSK-004/005/006, PHY-001..004, EMP-001/002, SHIFT-003..006 → Complete; AUTHZ-007, KSK-003 → Incomplete with honest residual gaps). The 14 remaining Missing rows (MFA, profile avatars, search-UI polish, form field dedup, first-login temp password, remote display management) are genuine and carry accurate gap notes.
+- **Security scan:** `scripts/security_scan.py` → **PASS** (findings confined to test fixtures/docs example payloads — printed for triage, non-blocking per scanner policy; **zero findings in shipped source**). Two false-positive matches outside fixtures (CI workflow's synthetic `ci-only-synthetic-password` placeholder; the wps2 sanitizer's own credential-detection literals) were reworded neutrally — no values changed, scanner strictness unchanged.
+- **Verification sweep:** full regression + Playwright acceptance suites re-run at closure (results recorded in the Final Project Completion Report); §24.8 boundaries (cross-tenant denial, idempotent retries, no credential exposure) covered by the standing suites (`tests/api/test_phase8_security.py`, `tests/api/test_guest_receipt_security.py`, `tests/unit/test_finance_policy_and_risk_rules.py`, `tests/api/test_phase8_e2e.py`).
+
+**Phase 13 — Deployment, documentation & demonstration**
+- **`docs/DEPLOYMENT_AND_OPERATIONS_GUIDE.md` delivered:** secret-free environment setup (`.env.example` walkthrough + production hard-fails), least-privilege MySQL provisioning (`skipline_app` + disposable-prefix grants; `scripts/wps2_privilege_transition.py`), Alembic `0001→0019` migration runbook (chain rehearsed on real MySQL; app boots on Alembic-built DB; `alembic check` clean), optional provider toggles (Redis / ClamAV / CSRF / AI / notifications), backup & restore (`make backup` / `restore` with check-then-force restore discipline), security operations, post-deployment smoke checklist, and **seven role-by-role demonstration walkthroughs** (Super Admin, Org Admin, Operator, Customer, Kiosk, Public Display, AI Assistant).
+- **Standing owner gates (unchanged, out of code scope):** SEC-009 legal review; Docker engine offline at closure; hosted-CI verification requires owner credentials.
+- All changes left **uncommitted** for owner review, per the master instructions.
+

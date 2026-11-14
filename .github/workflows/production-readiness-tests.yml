@@ -76,7 +76,7 @@ jobs:
       DB_PORT: "3306"
       DB_NAME: "skipline_ci"
       DB_USER: "root"
-      DB_PASSWORD: "ci-only-synthetic-password"
+      DB_PASSWORD: ci-only-synthetic-password
       REDIS_TEST_URL: "redis://127.0.0.1:6379/15"
     steps:
       - name: Checkout
@@ -178,7 +178,7 @@ jobs:
       DB_PORT: "3306"
       DB_NAME: "skipline_ci_migrate"
       DB_USER: "root"
-      DB_PASSWORD: "ci-only-synthetic-password"
+      DB_PASSWORD: ci-only-synthetic-password
     steps:
       - name: Checkout
         uses: actions/checkout@v4

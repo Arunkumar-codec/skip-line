@@ -73,6 +73,67 @@
   </div>
 </div>
 
+<!-- Phase 10 (§16.6/§21): waiting-time estimate accuracy — MEASURED vs ESTIMATED -->
+<div class="content-card mb-4 fade-in-up">
+  <div class="card-header-sl">
+    <h2 class="card-title-sl">Waiting-Time Estimate Accuracy — Last 30 Days</h2>
+  </div>
+  <div class="p-4">
+    {% if wait_accuracy and wait_accuracy.sample_count %}
+    <div class="table-responsive">
+      <table class="sl-table">
+        <thead>
+          <tr><th>Metric</th><th>Value (minutes)</th><th>Kind</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Compared predictions</td>
+            <td><strong>{{ wait_accuracy.sample_count }}</strong> tokens</td>
+            <td class="text-muted">Measured</td>
+          </tr>
+          <tr>
+            <td>Average measured actual wait (booking → called)</td>
+            <td><strong>{{ wait_accuracy.measured_avg_actual_wait_minutes }}</strong> min</td>
+            <td class="text-muted">Measured actual</td>
+          </tr>
+          <tr>
+            <td>Average predicted wait (booking-time estimate)</td>
+            <td><strong>{{ wait_accuracy.estimated_avg_predicted_wait_minutes }}</strong> min</td>
+            <td class="text-muted">Estimated</td>
+          </tr>
+          <tr>
+            <td>Mean Absolute Error (MAE)</td>
+            <td><strong>{{ wait_accuracy.mae_minutes }}</strong> min</td>
+            <td class="text-muted">Estimated vs measured</td>
+          </tr>
+          <tr>
+            <td>Bias (positive = waits over-estimated)</td>
+            <td><strong>{{ wait_accuracy.bias_minutes }}</strong> min</td>
+            <td class="text-muted">Estimated vs measured</td>
+          </tr>
+          <tr>
+            <td>Estimates marked “insufficient data” (honest refusals)</td>
+            <td><strong>{{ wait_accuracy.insufficient_data_estimates }}</strong></td>
+            <td class="text-muted">Not estimated</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted small mb-0">
+      Predictions are compared against the measured actual service start
+      (token called). Estimates and measured values are kept strictly
+      distinct (MASTER §21).
+    </p>
+    {% else %}
+    <p class="text-muted mb-0">
+      No comparable predictions yet — accuracy appears here once booked
+      tokens with a recorded estimate are called within the last
+      {{ wait_accuracy.window_days if wait_accuracy else 30 }} days.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
 <!-- Status breakdown table -->
 <div class="content-card fade-in-up">
   <div class="card-header-sl">

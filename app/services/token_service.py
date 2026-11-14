@@ -888,6 +888,15 @@ async def _book_token_body(
         meta={"slot_id": slot.id} if slot is not None else None,
     )
 
+    # Phase 10 (§16.6): persist the initial predicted-wait snapshot inside
+    # the booking transaction — the §16.6 anchor compared later against the
+    # actual service start. Must never fail the booking (B15 precedent).
+    try:
+        from app.services import wait_time_service
+        await wait_time_service.record_initial_snapshot(db, token)
+    except Exception:
+        logger.exception("Initial wait-time snapshot skipped (booking remains valid)")
+
     # Phase 9 (Workstream B): if the token's service has a configured
     # multi-stage workflow, open its stage transaction in THIS transaction.
     # A workflow failure must never fail the booking (B15 legacy guarantee).
@@ -1034,6 +1043,17 @@ async def perform_token_action(
         meta={"old": old_status, "new": new_status},
     )
 
+    # Phase 10 (§16.6): material queue event → recalc snapshots for the
+    # first waiting tokens so predicted-vs-actual accuracy can track
+    # estimate evolution, not just the booking-time anchor.
+    try:
+        from app.services import wait_time_service
+        await wait_time_service.record_recalc_for_counter(
+            db, token.counter_id, org_id
+        )
+    except Exception:
+        logger.exception("Wait-time recalc snapshots skipped (queue action remains valid)")
+
     # Phase 9 (Workstream B): keep the workflow ledger consistent when the
     # token itself reaches a terminal status (same transaction → atomic, B13).
     if action in ("complete", "cancel", "skip"):
@@ -1072,8 +1092,6 @@ async def get_token_tracking(db: AsyncSession, token_id: int) -> dict:
         raise ValueError("Token not found")
 
     counter = await db.get(Counter, token.counter_id)
-    service = await db.get(Service, token.service_id) if token.service_id else None
-    est_minutes = service.estimated_minutes if service else 10
 
     # People ahead = tokens waiting with lower sequence at same counter
     people_ahead = (await db.execute(
@@ -1097,13 +1115,44 @@ async def get_token_tracking(db: AsyncSession, token_id: int) -> dict:
     )
     current_token = current_result.scalar_one_or_none()
 
+    # Phase 10 (§16.1–§16.4): the single authoritative explainable estimator.
+    # Non-WAITING tokens have no forward wait — surface an honest zero-wait
+    # payload rather than a stale queue estimate.
+    if token.status == TokenStatus.WAITING:
+        from app.services import wait_time_service
+        est = await wait_time_service.estimate_for_token(db, token)
+        estimate_payload = est.serialize()
+    else:
+        estimate_payload = {
+            "estimated_wait_minutes": 0,
+            "estimated_wait_range_min": 0,
+            "estimated_wait_range_max": 0,
+            "estimated_wait_status": "estimate",
+            "estimated_wait_basis": "not_waiting",
+            "people_ahead": int(people_ahead),
+            "people_ahead_effective": int(people_ahead),
+            "active_counter_count": None,
+            "duration_sample_count": None,
+            "estimated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "estimate_explanation": "No queue wait — the token is past the waiting stage.",
+        }
+
     return {
         "token_id": token.id,
         "token_number": token.token_number,
         "status": token.status,
         "queue_position": token.queue_position,
         "people_ahead": int(people_ahead),
-        "estimated_wait_minutes": int(people_ahead) * est_minutes,
+        # Backward-compatible queue-metric field — now None when the honest
+        # answer is "insufficient data" (§16.1: never fabricate a 10-min
+        # default). Range/label/explanation fields accompany it.
+        "estimated_wait_minutes": estimate_payload["estimated_wait_minutes"],
+        "estimated_wait_range_min": estimate_payload["estimated_wait_range_min"],
+        "estimated_wait_range_max": estimate_payload["estimated_wait_range_max"],
+        "estimated_wait_status": estimate_payload["estimated_wait_status"],
+        "estimated_wait_basis": estimate_payload["estimated_wait_basis"],
+        "estimated_at": estimate_payload["estimated_at"],
+        "estimate_explanation": estimate_payload["estimate_explanation"],
         "current_token_at_counter": current_token,
         "counter_name": counter.counter_name if counter else "",
         # Phase 9 (Workstream B): meaningful multi-stage progress for tokens
@@ -1161,6 +1210,14 @@ async def get_display_data(db: AsyncSession, org_id: int) -> dict:
         )
         upcoming = upcoming_result.scalars().all()
 
+        # Phase 10 (§16.4/§16.7): estimate + timestamp for a NEW arrival at
+        # this counter. Token numbers and durations only — the display
+        # payload never carries names, mobiles or any PII (§16.7).
+        estimate: dict = {}
+        if upcoming:
+            from app.services import wait_time_service
+            estimate = await wait_time_service.estimate_for_counter_queue(db, c)
+
         counter_data.append({
             "counter_id": c.id,
             "counter_name": c.counter_name,
@@ -1168,6 +1225,9 @@ async def get_display_data(db: AsyncSession, org_id: int) -> dict:
             "status": c.status,
             "current_token": current,
             "upcoming_tokens": list(upcoming),
+            # Phase 10: honest estimate for the next token (empty dict when
+            # the queue is empty — nothing to estimate for an empty queue).
+            "estimate": estimate,
         })
 
     # Announcement

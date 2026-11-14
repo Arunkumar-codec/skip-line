@@ -223,6 +223,20 @@
         {% endfor %}
       {% else %}
         <span class="text-muted small">Queue empty</span>
+        {% endif %}
+    </div>
+    <!-- Phase 10 (§16.4/§16.7): estimate + timestamp for the next token.
+         Token numbers/durations only — this screen never shows names,
+         phone numbers or any other customer PII. -->
+    <div class="upcoming-label" style="margin-top:10px" id="etaWrap-{{ c.counter_id }}">
+      {% if c.estimate and c.estimate.estimated_wait_status == 'estimate' and c.estimate.estimated_wait_minutes is not none %}
+      Est. wait: {{ c.estimate.estimated_wait_minutes }} min
+      {% if c.estimate.estimated_wait_range_min is not none %}
+      (likely {{ c.estimate.estimated_wait_range_min }}–{{ c.estimate.estimated_wait_range_max }} min)
+      {% endif %}
+      — updated {{ c.estimate.estimated_at }}
+      {% elif c.estimate and c.estimate.estimated_wait_status == 'insufficient_data' %}
+      Est. wait: not enough data yet — updated {{ c.estimate.estimated_at }}
       {% endif %}
     </div>
   </div>
@@ -393,6 +407,25 @@ function renderDisplay(data) {
         empty.className = 'text-muted small';
         empty.textContent = 'Queue empty';
         upcomingEl.appendChild(empty);
+      }
+    }
+
+    // Phase 10 (§16.4/§16.7): live estimate line for the next token.
+    // textContent only — WS payload is untrusted; no PII is rendered.
+    const etaWrap = document.getElementById(`etaWrap-${c.counter_id}`);
+    if (etaWrap) {
+      const est = c.estimate || {};
+      if (est.estimated_wait_status === 'estimate' && est.estimated_wait_minutes != null) {
+        let text = `Est. wait: ${est.estimated_wait_minutes} min`;
+        if (est.estimated_wait_range_min != null) {
+          text += ` (likely ${est.estimated_wait_range_min}–${est.estimated_wait_range_max} min)`;
+        }
+        text += ` — updated ${est.estimated_at || ''}`;
+        etaWrap.textContent = text;
+      } else if (est.estimated_wait_status === 'insufficient_data') {
+        etaWrap.textContent = `Est. wait: not enough data yet — updated ${est.estimated_at || ''}`;
+      } else if (!c.upcoming_tokens?.length) {
+        etaWrap.textContent = '';
       }
     }
   });

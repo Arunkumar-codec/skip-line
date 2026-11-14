@@ -41,6 +41,10 @@ def _build_pdf(
     slot_label: Optional[str] = None,
     payment_label: Optional[str] = None,
     estimated_wait_minutes: Optional[int] = None,
+    estimated_wait_range_min: Optional[int] = None,
+    estimated_wait_range_max: Optional[int] = None,
+    estimate_status: Optional[str] = None,
+    estimate_generated_at: Optional[datetime] = None,
     instructions: Optional[str] = None,
 ) -> None:
     """Synchronous PDF generation — called in a thread executor."""
@@ -128,9 +132,32 @@ def _build_pdf(
     if payment_label:
         data.append([Paragraph("Payment", label_style), Paragraph(payment_label, value_style)])
     if estimated_wait_minutes is not None:
+        # §16.4/§16.5: show the range when the estimator produced one.
+        if estimated_wait_range_min is not None and estimated_wait_range_max is not None:
+            estimate_text = (
+                f"{estimated_wait_range_min}\u2013{estimated_wait_range_max} min (snapshot)"
+            )
+        else:
+            estimate_text = f"{int(estimated_wait_minutes)} min (snapshot)"
         data.append([
             Paragraph("Est. Wait", label_style),
-            Paragraph(f"{int(estimated_wait_minutes)} min (snapshot)", value_style),
+            Paragraph(estimate_text, value_style),
+        ])
+    elif estimate_status == "insufficient_data":
+        # §16.1/§24.7: never fabricate precision on a printed slip.
+        data.append([
+            Paragraph("Est. Wait", label_style),
+            Paragraph("Insufficient data (snapshot)", value_style),
+        ])
+    if estimate_generated_at is not None:
+        # §16.5/§22: a printed estimate is a STATIC snapshot — always carry
+        # the moment it was generated so it is never mistaken for live.
+        data.append([
+            Paragraph("Snapshot At", label_style),
+            Paragraph(
+                estimate_generated_at.strftime("%d %b %Y, %I:%M %p UTC"),
+                value_style,
+            ),
         ])
     if guest_name:
         data.insert(0, [Paragraph("Name", label_style), Paragraph(guest_name, value_style)])
@@ -181,6 +208,10 @@ async def generate_token_receipt(
     slot_label: Optional[str] = None,
     payment_label: Optional[str] = None,
     estimated_wait_minutes: Optional[int] = None,
+    estimated_wait_range_min: Optional[int] = None,
+    estimated_wait_range_max: Optional[int] = None,
+    estimate_status: Optional[str] = None,
+    estimate_generated_at: Optional[datetime] = None,
     instructions: Optional[str] = None,
 ) -> str:
     """
@@ -209,6 +240,10 @@ async def generate_token_receipt(
             slot_label=slot_label,
             payment_label=payment_label,
             estimated_wait_minutes=estimated_wait_minutes,
+            estimated_wait_range_min=estimated_wait_range_min,
+            estimated_wait_range_max=estimated_wait_range_max,
+            estimate_status=estimate_status,
+            estimate_generated_at=estimate_generated_at,
             instructions=instructions,
         ),
     )

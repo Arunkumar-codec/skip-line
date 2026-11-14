@@ -663,10 +663,25 @@ class TestPaymentTokenRisk:
 
 
 class TestVerifyWiredRiskEvaluation:
-    async def test_verify_flags_duplicate_successful_payment(self, db_session):
+    async def test_verify_flags_duplicate_successful_payment(
+        self, db_session, monkeypatch
+    ):
         """Wired flow: `/payments/verify` confirmation runs FIN-003 evaluation
         — a second successful payment on the same token surfaces a flag while
-        the confirmation itself still succeeds exactly once."""
+        the confirmation itself still succeeds exactly once.
+
+        Hermetic (Phase 10 regression note): this test previously depended on
+        the developer .env carrying Razorpay keys. Under the owner-mandated
+        blanked optional-provider posture the `ensure_razorpay_configured`
+        503 guard engages, so the wired-verify path becomes unreachable and
+        the test fails on ANY environment (reproduced on pristine baseline
+        42430ae). Dummy TEST-ONLY credentials are injected here — no real
+        provider is contacted (signature verification is local HMAC); the
+        blanked `.env` posture stays untouched."""
+        monkeypatch.setattr(settings, "razorpay_key_id", "test-only-key-id")
+        monkeypatch.setattr(settings, "razorpay_key_secret",
+                            "test-only-key-secret-not-a-real-credential")
+
         org = await _make_org(db_session)
         service = await _make_service(db_session, org)
         token = await _make_token(db_session, org, service, amount_paid=Decimal("500.00"))

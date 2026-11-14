@@ -379,6 +379,9 @@ async def execute_tool(
         if not token or token.user_id != user.id:
             raise ValueError("Booking not found for your account")
         tracking = await token_service.get_token_tracking(db, parsed.token_id)
+        # Phase 10 (§16.3/§15.4): the assistant relays ONLY the structured,
+        # verified estimator output — never a fabricated number. The
+        # explanation carries the "not guaranteed" honesty the LLM must echo.
         return {
             "booking": {
                 "id": parsed.token_id,
@@ -387,7 +390,19 @@ async def execute_tool(
                 "counter": tracking.get("counter_name"),
                 "people_ahead": tracking.get("people_ahead"),
                 "estimated_wait_minutes": tracking.get("estimated_wait_minutes"),
+                "estimated_wait_range_min": tracking.get("estimated_wait_range_min"),
+                "estimated_wait_range_max": tracking.get("estimated_wait_range_max"),
+                "estimated_wait_status": tracking.get("estimated_wait_status"),
+                "estimate_updated_at": tracking.get("estimated_at"),
+                "estimate_explanation": tracking.get("estimate_explanation"),
             },
+            "note": (
+                "Waiting-time figures come from the backend estimator and are "
+                "ESTIMATES, not guarantees (§16.4). When "
+                "estimated_wait_status is 'insufficient_data', tell the "
+                "customer an honest estimate is not available yet — never "
+                "invent one."
+            ),
         }
 
     raise ValueError(f"Unknown protocol action: {action}")

@@ -71,6 +71,7 @@ from models.workflow import (                                   # noqa: F401 —
     TokenStageLog,
 )
 from models.ai_conversation import AiConversation               # noqa: F401 — Phase 9 C/D
+from models.wait_time_estimate import WaitTimeEstimate          # noqa: F401 — Phase 10 §16.6
 from models.finance import (                                # noqa: F401
     LedgerEntry,
     CashSession,
@@ -143,4 +144,5 @@ __all__ = [
     "FinancialRiskFlag",
     "WebhookEvent",
     "AiConversation",
+    "WaitTimeEstimate",
 ]

@@ -353,6 +353,11 @@ async def queue_report(
 
     total_tokens = sum(status_counts.values())
 
+    # Phase 10 (§16.6/§21): platform-admin accuracy panel — measured actual
+    # wait vs booking-time predicted wait over the rolling window.
+    from app.services import wait_time_service
+    wait_accuracy = await wait_time_service.accuracy_summary(db, days=30)
+
     return templates.TemplateResponse(request, "admin/reports_queue.html", {
         "request": request,
         "current_admin": admin,
@@ -363,6 +368,7 @@ async def queue_report(
         "labels": labels,
         "issued_data": issued_data,
         "completed_data": completed_data,
+        "wait_accuracy": wait_accuracy,
         "now": datetime.now(timezone.utc),
     })
 
