@@ -103,6 +103,9 @@ jobs:
         # NOTE: normal fixtures in use — --noconftest is intentionally NOT set.
         # The in-memory SQLite session fixture (tests/conftest.py) prepares the
         # DB; no test connects to the MySQL service engine directly.
+        # tests/acceptance is EXCLUDED here (same as the canonical local
+        # regression command): Playwright is deliberately pinned only in
+        # requirements-acceptance.txt and this job installs no browsers.
         # `set -o pipefail` propagates pytest's exit code THROUGH the `tee`
         # pipeline — without it the trailing tee would zero out a failed
         # run and the job could never go red. stderr is merged (2>&1) so
@@ -112,7 +115,7 @@ jobs:
         run: |
           set -o pipefail
           code=0
-          python -m pytest --tb=short --junitxml=pytest-results.xml 2>&1 | tee pytest-output.txt || code=$?
+          python -m pytest --ignore=tests/acceptance --tb=short --junitxml=pytest-results.xml 2>&1 | tee pytest-output.txt || code=$?
           if [ "$code" -ne 0 ]; then
             tail -n 6 pytest-output.txt | while IFS= read -r line; do
               enc=$(printf '%s' "$line" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')
@@ -158,7 +161,7 @@ jobs:
   # workstation's Code Integrity policy blocks greenlet). In CI the repo's
   # normal async env.py runs as-is, proving it a second way.
   mysql-migration-chain:
-    name: MySQL migration chain 0001→0018 up/down/re-up
+    name: MySQL migration chain up/down/re-up (head-relative audit)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:

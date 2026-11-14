@@ -6,7 +6,7 @@ CI migration verification for SkipLine (Phase-9 production readiness).
 Runs the REAL alembic chain against a DISPOSABLE MySQL 8 database created by
 the script itself, then:
 
-    upgrade 0001..0017  ->  seed legacy rows  ->  upgrade head (0018)
+    upgrade 0001..0017  ->  seed legacy rows  ->  upgrade head
     -> FK audit (information_schema)  -> named-index audit
     -> downgrade 0017 (MySQL error-1553 regression check)
     -> re-upgrade head (idempotence)
@@ -333,6 +333,11 @@ def main(env: dict = None) -> int:
         sys.exit(f"database setup FAILED: {rd(str(e))}")
 
     cfg = Config("alembic.ini")  # script_location=migrations handled by env.py
+    # Head-relative assertions: the chain keeps growing (0019, 0020, ...),
+    # so never hard-code the head revision here again.
+    from alembic.script import ScriptDirectory
+
+    HEAD = ScriptDirectory.from_config(cfg).get_current_head()
     engine = create_engine(db_url_str, pool_pre_ping=True)
 
     def insert_row(table, explicit):
@@ -429,9 +434,9 @@ def main(env: dict = None) -> int:
             print("[3] legacy rows seeded (2 tokens, org, service, counter)")
 
             t0 = time.time()
-            command.upgrade(cfg, "head")  # -> 0018
+            command.upgrade(cfg, "head")  # -> current head (0020 at this writing)
             ver, hit, legacy, fks, idx = check("after-up")
-            assert ver == "0018", f"expected version 0018, got {ver}"
+            assert ver == HEAD, f"expected version {HEAD}, got {ver}"
             assert set(hit) == PHASE9, \
                 f"0018 tables incomplete: missing {PHASE9 - set(hit)}"
             assert legacy == (2, 1, 1), \
@@ -445,7 +450,7 @@ def main(env: dict = None) -> int:
                 f"declared FKs missing after upgrade: {sorted(missing_fks)}"
             assert not unexpected_fks, \
                 f"unexpected FKs on phase-9 tables: {sorted(unexpected_fks)}"
-            print(f"[4] upgrade head (0018) OK in {time.time() - t0:.1f}s; "
+            print(f"[4] upgrade head ({HEAD}) OK in {time.time() - t0:.1f}s; "
                   f"FK set={sorted(fks)}")
 
             t0 = time.time()
@@ -461,7 +466,7 @@ def main(env: dict = None) -> int:
             t0 = time.time()
             command.upgrade(cfg, "head")
             ver, hit, legacy, fks2, idx2 = check("after-reup")
-            assert ver == "0018" and set(hit) == PHASE9
+            assert ver == HEAD and set(hit) == PHASE9
             assert legacy == (2, 1, 1)
             assert fks2 == fks, \
                 "FK set differs after re-upgrade (idempotence broken)"
@@ -486,7 +491,7 @@ def main(env: dict = None) -> int:
         sys.exit("MIGRATION CHAIN FAILED (see messages above; the disposable "
                  "database created by this run was dropped).")
 
-    print("ALL-OK: real alembic chain 0001→0018 up/down/re-up verified;"
+    print(f"ALL-OK: real alembic chain 0001→{HEAD} up/down/re-up verified;"
           " all 14 declared FKs and 9/9 declared indexes match the migration;"
           " legacy rows preserved at every step; no error 1553.")
     return 0
